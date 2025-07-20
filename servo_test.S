@@ -307,10 +307,10 @@ scratch 	= 0x2000002C
 result1 	= 0x20000030
 result2 	= 0x20000034
 dividend 	= 0x20000038 
-offset  	= 0x2000003C
+divisor  	= 0x2000003C
 scratchpad 	= 0x20000040
 buffer		= 0x20000044
-presence        = 0x20000048
+state           = 0x20000048
 mem 		= 0x2000004C
 
 
@@ -389,27 +389,13 @@ sp_init:
 #configure GPIO PortC as multiplex open drain output for I2C
 	la x10,R32_GPIOC_CFGLR 		# load pointer x10 with address of R32_GPIOC_CFGLR , I2C SDA & SCL is on portC PC1,PC2
 	lw x11,0(x10) 			# load contents from register pointed by x10
-	li x7,~((0xf<<4)|(0xf<<8)|(0xf<<12)|(0xf<<16)|(0xf<<20)|(0xf<<24)) 	# clear pc1,pc2,pc3. we need to setup PC1 & PC2 for I2C and pc3 for DFplayer switching
+	li x7,~((0xf<<4)|(0xf<<8)|(0xf<<12)|(0xf<<20)|(0xf<<24)) 	# clear pc1,pc2,pc3. we need to setup PC1 & PC2 for I2C and pc3 for DFplayer switching
 	and x11,x11,x7 			# clear  mode and cnf bits for selected pin C1,C2
-	li x7,(13<<4)|(13<<8)	 	# PC1 = multiplex open drain output 10mhz ,PC2= multiplex open drain output 10mhz, 0b1101, PC4 ADC
+	li x7,((13<<4)|(13<<8)) 	# PC1 = multiplex open drain output 10mhz ,PC2= multiplex open drain output 10mhz, 0b1101, PC3 pushpull out
 	or x11,x11,x7 			# OR value to register
 	sw x11,0(x10) 			# store in R32_GPIOC_CFGLR
 
-#configure GPIO PortC as pullup input for switch on PC4
-	la x10,R32_GPIOC_OUTDR		# output register C, enable 1 in ODR for pUllup with input in pullup/down MODE
-	lw x11,0(x10)			# we need 4 as pullup 
-	li x7,((1<<5)|(1<<6))		# write 1 in GPIOC_OUTDR to enable pull up resistor 
-	or x11,x11,x7
-	sw x11,0(x10)
 
-#configure GPIO PortD 
-	la x10,R32_GPIOD_CFGLR 		# load pointer x10 with address of R32_GPIOD_CFGLR 
-	lw x11,0(x10) 			# load contents from register pointed by x10
-	li x7,~(0xf<<12) 		# clear pd3 for ch1 floating input
-	and x11,x11,x7 			# clear  mode and cnf bits for selected pin C1,C2
-	li x7,(0x4<<16) 		# PD3 = float input
-	or x11,x11,x7 			# OR value to register
-	sw x11,0(x10) 			# store in R32_GPIOC_CFGLR
 
 
 ######################
@@ -454,123 +440,100 @@ sp_init:
 ###############################################################################
 
 timer2_pwmin_config:
-	li x10,R16_TIM2_CHCTLR1		# x10 points timer2 compare capture register
+	la x10,R16_TIM2_CHCTLR1		# x10 points timer2 compare capture register
 	lw x11,0(x10)
 	ori x11,x11,((1<<0)|(2<<8))	# Set TI1 (TI1FP1) to be the input of IC1 signal. Set CC1S to 01b.Set TI1 (TI1FP2) as the input of IC2 signal. Set CC2S to 10b.The channel 2 is internally connected to the channel 1, and this is to measure the duty cycle
 	sw x11,0(x10)
 	
-	li x10,R16_TIM2_CCER		# x10 points timer2 compare capture register
+	la x10,R16_TIM2_CCER		# x10 points timer2 compare capture register
 	lw x11,0(x10)
 	ori x11,x11,(1<<5)		# Select TI1FP2 to set to falling edge active. Set CC2P to 1 falling edge, CC1P =0 rising edge
 	sw x11,0(x10)
 
-	li x10,R16_TIM2_SMCFGR		# 
+	la x10,R16_TIM2_SMCFGR		# 
 	lw x11,0(x10)
 	ori x11,x11,((5<<4)|(4<<0))	# 101: Filtered timer input 1 (TI1FP1) is the clock.Set the SMS to reset mode, i.e. 100b
 	sw x11,0(x10)
 
-	li x10,R16_TIM2_INTFR		# x10 points to timer2 flag register
+	la x10,R16_TIM2_INTFR		# x10 points to timer2 flag register
 	sw zero,0(x10)
 
-	li x10,R16_TIM2_PSC		# x10 points to timer2 prescaler register
+	la x10,R16_TIM2_PSC		# x10 points to timer2 prescaler register
 	li x11,(7)			# counts at the 1mhz (timer1 update), 8000000/7+1 = 1Mhz, each count 1us
 	sw x11,0(x10)
 
-	li x10,R16_TIM2_ATRLR		# x10 points timer2 auto reload register, 
+	la x10,R16_TIM2_ATRLR		# x10 points timer2 auto reload register, 
 	li x11,(65535)			# max value before overflow (min frequency = 1000000/65535 = 15Hz
 	sw x11,0(x10)
 
-	li x10,R16_TIM2_CCER		# x10 points timer2 compare capture enable register
+	la x10,R16_TIM2_CCER		# x10 points timer2 compare capture enable register
 	lw x11,0(x10)
 	ori x11,x11,((1<<0)|(1<<4))	# Compare capture channel1 & chanenel2  enabled
 	sw x11,0(x10)
 
-	li x10,R16_TIM2_CTLR1
+	la x10,R16_TIM2_CTLR1
 	lw x11,0(x10)
 	ori x11,x11,(1<<0)		# enable timer 2
 	sw x11,0(x10)
 
 #Enable ADC prescaler in clock configuration register
-	li x10,R32_RCC_CFGR0
+	la x10,R32_RCC_CFGR0
 	lw x11,0(x10)
 	li x7,((8<<11))			# 0b01000 ADC prescalar ahb/4 = 8/4 = 2mhz
 	or x11,x11,x7
 	sw x11,0(x10)
 
 #disable ADC before configuration
-	li x10,R32_ADC_CTLR2
+	la x10,R32_ADC_CTLR2
 	lw x11,0(x10)
 	li x7,0xfffffffe		#disable ADON bit , 0 written in 0bit
 	and x11,x11,x7
 	sw x11,0(x10)
 
 #set sequence of conversion channel
-	li x10,R32_ADC_RSQR3		# sequence register, if multiple sensors used we can determine the order of conversion
+	la x10,R32_ADC_RSQR3		# sequence register, if multiple sensors used we can determine the order of conversion
 	lw x11,0(x10)
 	li x7,(7<<0)			# AIN7 adc channel is written to sequence 1 (only one channel in this project)	
 	or x11,x11,x7
 	sw x11,0(x10)
 
 #set sampling cycles
-	li x10,R32_ADC_SAMPTR2		# takes sampling cycles for each measurement
+	la x10,R32_ADC_SAMPTR2		# takes sampling cycles for each measurement
 	lw x11,0(x10)
 	li x7,(7<<21)			# 0b111/0x7 is 241 cycles	
 	or x11,x11,x7
 	sw x11,0(x10)
 
 #enable adc in control register2
-	li x10,R32_ADC_CTLR2
+	la x10,R32_ADC_CTLR2
 	lw x11,0(x10)
 	li x7,((7<<17)|(1<<0))		# SWSTART trigger for ADC and ADON
 	or x11,x11,x7
 	sw x11,0(x10)
 
 #reset calibrate ADC
-	li x10,R32_ADC_CTLR2
+	la x10,R32_ADC_CTLR2
 	lw x11,0(x10)
 	li x7,(1<<3)			# reset calibration	
 	or x11,x11,x7
 	sw x11,0(x10)
 check1:
-	li x10,R32_ADC_CTLR2
+	la x10,R32_ADC_CTLR2
 	lw x11,0(x10)
 	andi x11,x11,(1<<3)
 	bnez x11,check1
 
 # calibrate ADC
-	li x10,R32_ADC_CTLR2
+	la x10,R32_ADC_CTLR2
 	lw x11,0(x10)
 	li x7,(1<<2)			# start calibration	
 	or x11,x11,x7
 	sw x11,0(x10)
 check2:
-	li x10,R32_ADC_CTLR2
+	la x10,R32_ADC_CTLR2
 	lw x11,0(x10)
 	andi x11,x11,(1<<2)
 	bnez x11,check2
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 infyloop:
@@ -585,16 +548,48 @@ infyloop:
 	string message1
         call delay1S
 	call cleardisplay
-	pos 0,0
-	string message2
+la x10,result_lo
+li x11,0xffff
+sw x11,0(x10)
+call convert_to_decimal         # result in mem +10
+call displayresult2
         call delay1S
-	pos 0,1
-	string message1
-	call delay1S
 	call cleardisplay
-	string message2
+########################################################
+# ADC measure
+measure:
+	la x10,R32_ADC_CTLR2
+	lw x11,0(x10)
+	li x7,(1<<22)			# (1<<SWSTART) start conversion
+	ori x11,x11,1
+	sw x11,0(x10)
+checkflag:
+	la x10,R32_ADC_STATR		# adc status register
+	lw x11,0(x10)
+	andi x11,x11,2			# adc conversion finish flag mask
+	beqz x11,checkflag		# wait till bit 1 is set
+
+la x10,result_lo
+li x11,10000000
+sw x11,0(x10)
+call convert_to_decimal         # result in mem +10
+call displayresult2
+        call delay1S
+	call cleardisplay
+
+	la x10,R32_ADC_RDATAR		# ADC data register
+	lw x11,0(x10)			# copy data register
+	la x10,result_lo		# load address of result_lo variable in SRAM, decimal converter takes it from here
+	sw x11,0(x10)			# store ADC result in result_lo
+########################################################
+call convert_to_decimal         # result in mem +10
+call displayresult2
+
+
+
+
 here:
-        j here
+        j measure
 
 
 
@@ -818,7 +813,76 @@ cleardisplay:
 
 ######################################################
 
+#################################################################################
+#subroutine to read ASCI values from SRAM address "mem" to LCD
+#################################################################################
+displayresult:        
+		addi sp,sp,-16
+		sw ra,0(sp)
+		sw x6,4(sp)
+		sw a0,8(sp)
+		sw x15,12(sp)
+		la a0,mem		# load address mem
+		addi a0,a0,6		# increase pointer to 6th byte
+		lb x6,0(a0)		# copy the byte in 6th place
+		addi a0,a0,1		# increase address
+		sb x6,0(a0)		# store 6th byte to 7th place
+		addi a0,a0,-1		# decrease address to 6th place
+		li x6,'.'		# load decimal point in x6
+		sb x6,0(a0)		# store decimal point in 6th place
+		#pos 0,0		# cursor at 0,0
+		#string message3	# display "weight"
+		pos 1,1			# cursor at 2nd line
+		li x6,10		# counter loaded with number of bytes
+		#li x6,8		# counter loaded with number of bytes
+		la a0,mem		# load ddress of mem where bytes are stored
+writeloop:
+		lb x15,0(a0)		# load 1 bytes from msb >>> lsb
+		call DATA_WRITE		# transmit byte to LCD
+		call delay10us		# delay
+		call delay10us		# delay
+		
+		addi a0,a0,1		# increase pointer
+		addi x6,x6,-1		# decrease byte couter
+		bnez x6,writeloop	# loop till x6=0
+		pos 9,1			# 9 position from left on 2nd line
+		string message7		# " gm"
+		lw x15,12(sp)
+		lw a0,8(sp)
+		lw x6,4(sp)
+		lw ra,0(sp)
+		addi sp,sp,16
+		ret
 
+
+displayresult2:        
+		addi sp,sp,-16
+		sw ra,0(sp)
+		sw x6,4(sp)
+		sw a0,8(sp)
+		sw x15,12(sp)
+		pos 0,0			# cursor at 0,0
+		li x6,11		# counter loaded with number of bytes, 6bytes for -xxx.x
+		la a0,mem		# load ddress of mem where bytes are stored
+
+writeloop2:
+		lb x15,0(a0)		# load 1 bytes from msb >>> lsb
+		call DATA_WRITE
+		call delay10us
+		call delay10us
+		
+		addi a0,a0,1
+		addi x6,x6,-1
+		bnez x6,writeloop2
+
+		lw x15,12(sp)
+		lw a0,8(sp)
+		lw x6,4(sp)
+		lw ra,0(sp)
+		addi sp,sp,16
+		ret   
+
+######################################################################################
 
 
 ####----I2C--FUNCTIONS-----------------------------------------------------------------------------
@@ -1109,46 +1173,36 @@ loopus:
 
 
 
-########################################################
-# ADC measure
-measure:
-	li x10,R32_ADC_CTLR2
-	lw x11,0(x10)
-	li x7,(1<<22)			# (1<<SWSTART) start conversion
-	ori x11,x11,1
-	sw x11,0(x10)
-checkflag:
-	li x10,R32_ADC_STATR		# adc status register
-	lw x11,0(x10)
-	andi x11,x11,2			# adc conversion finish flag mask
-	beqz x11,checkflag		# wait till bit 1 is set
-	li x10,R32_ADC_RDATAR		# ADC data register
-	lw x11,0(x10)			# copy data register
-	li x10,result1			# load address of result1 variable in SRAM
-	sw x11,0(x10)			# store ADC result in result1
-########################################################
 
 PWM_measure:
 	
-	li x10,R16_TIM2_CH2CVR		# comparison capture registers (CHxCVR) that support comparison with the main counter (CNT) to output pulses
+	la x10,R16_TIM2_CH2CVR		# comparison capture registers (CHxCVR) that support comparison with the main counter (CNT) to output pulses
 	lw x11,0(x10)			# read compare capture value(pulse width)
 	li x10,result1			# laod x10 with address of result1 register
 	sw x11,0(x10)			# copy state register to x7
 
-	li x10,R16_TIM2_CH1CVR		# comparison capture registers (CHxCVR) that support comparison with the main counter (CNT) to output pulses
+	la x10,R16_TIM2_CH1CVR		# comparison capture registers (CHxCVR) that support comparison with the main counter (CNT) to output pulses
 	lw x11,0(x10)			# read compare capture value(period/cycle time)
-	li x10,result2			# laod x10 with address of result2 register
+	la x10,result2			# laod x10 with address of result2 register
 	sw x11,0(x10)			# copy state register to x7
 
-	li x10,result1			# load address of result1
-	li x11,result2			# load address of result2
+	la x10,result1			# load address of result1
+	la x11,result2			# load address of result2
 	lw x7,0(x10)			# copy to x7 duty cycle, on time
 	lw x6,0(x11)			# copy to x6 frequency time
-	
-
-
-
-
+	sub x6,x6,x7			# subtract duty cycle from frequency
+	sw x6,0(x10)			# result in result1
+	la x10,dividend			# load address of divedend register
+	sw x6,0(x10)			# store subtract value in dividend register
+	la x10,divisor			# load address of divisor register
+	la x11,100			# load x11 with divisor value 100
+	sw x11,0(x10)			# store 100 in divisor register
+	call division			# result in state , (wave period-pulse on time/ 100)
+	la x10,state			# load address of state register
+	lw x7,0(x10)			# copy (wave period-pulse on time/ 100) to x7
+	sub x11,x11,x7			# subtract result of division from 100, give percentage of on time
+	la x10,result1			# store duty cycle percentage in result1 register
+	sw x11,0(x10)			# store duty cycle percentage
 ###########################################################################################
 #######################################################################################################
 # division routine, load divisor and dividend in sram before calling, result in state register ,sram
@@ -1174,9 +1228,9 @@ division:
 	li a2,0				# initialize a2 to 0
 	li a4,0				# initialize a4 to 0
 	li a5,0				# initialize a5 to 0 
-	li x10,dividend			# numerator loaded here
+	la x10,dividend			# numerator loaded here
 	lw a1,0(x10)			# divident x11
-	li x10,divisor			# divisor in result1,x10 points to sram result1
+	la x10,divisor			# divisor in result1,x10 points to sram result1
 	lw a3,0(x10)			# load word in state to x13(divisor)
 X:
 	sub a5,a1,a3			# subtract divisor from dividend and store remainder in a5
@@ -1187,9 +1241,9 @@ X:
 	addi t2,t2,1			# increase t2 by 1 for each successful subtraction (result)
 	J X				# loop to X till t1 is set
 carry:
-	li t0, state			# load address of state in t0
+	la t0, state			# load address of state in t0
 	sw t2,0(t0)			# store result in t2 in state
-#	li t0, result2			# load address of result2 in t0
+#	la t0, result2			# load address of result2 in t0
 #	sw a1,0(t0)			# store a1 high byte of result in result2 = 0
 	lw t1,0(sp)
 	lw a5,4(sp)
@@ -1215,7 +1269,7 @@ carry:
 	la gp,mem
 	li tp,0x20202020
 	sw tp,0(gp)
-	li tp,0x20303020
+	li tp,0x20202020
 	sw tp,4(gp)
 	addi gp,gp,10	  # write backwards lsb to msb
 digit_loop:
@@ -1272,109 +1326,26 @@ skip_sub:
     	lw ra,0(sp)
     	addi sp,sp,20
     	ret
-
-#################################################################################
-#subroutine to read ASCI values from SRAM address "mem" to LCD
-#################################################################################
-displayresult:        
-		addi sp,sp,-16
-		sw ra,0(sp)
-		sw x6,4(sp)
-		sw a0,8(sp)
-		sw x15,12(sp)
-		la a0,mem		# load address mem
-		addi a0,a0,6		# increase pointer to 6th byte
-		lb x6,0(a0)		# copy the byte in 6th place
-		addi a0,a0,1		# increase address
-		sb x6,0(a0)		# store 6th byte to 7th place
-		addi a0,a0,-1		# decrease address to 6th place
-		li x6,'.'		# load decimal point in x6
-		sb x6,0(a0)		# store decimal point in 6th place
-		#pos 0,0		# cursor at 0,0
-		#string message3	# display "weight"
-		pos 1,1			# cursor at 2nd line
-		li x6,10		# counter loaded with number of bytes
-		#li x6,8		# counter loaded with number of bytes
-		la a0,mem		# load ddress of mem where bytes are stored
-writeloop:
-		lb x15,0(a0)		# load 1 bytes from msb >>> lsb
-		call DATA_WRITE		# transmit byte to LCD
-		call delay10us		# delay
-		call delay10us		# delay
-		
-		addi a0,a0,1		# increase pointer
-		addi x6,x6,-1		# decrease byte couter
-		bnez x6,writeloop	# loop till x6=0
-		pos 9,1			# 9 position from left on 2nd line
-		string message7		# " gm"
-		lw x15,12(sp)
-		lw a0,8(sp)
-		lw x6,4(sp)
-		lw ra,0(sp)
-		addi sp,sp,16
-		ret
-
-
-displayresult2:        
-		addi sp,sp,-16
-		sw ra,0(sp)
-		sw x6,4(sp)
-		sw a0,8(sp)
-		sw x15,12(sp)
-		la a0,mem		# load address mem
-		addi a0,a0,6		# increase pointer to 6th byte
-		lb x6,0(a0)		# copy the byte in 6th place
-		addi a0,a0,1		# increase address
-		sb x6,0(a0)		# store 6th byte to 7th place
-		addi a0,a0,-1		# decrease address to 6th place
-		li x6,'.'		# load decimal point in x6
-		sb x6,0(a0)		# store decimal point in 6th place
-		pos 0,0			# cursor at 0,0
-		string message11	# display "Temp"
-		#pos 1,1		# cursor at 2nd line
-		#li x6,10
-		li x6,6			# counter loaded with number of bytes, 6bytes for -xxx.x
-		la a0,mem		# load ddress of mem where bytes are stored
-		addi a0,a0,2		# we will only write from 8th to 3rd
-writeloop2:
-		lb x15,0(a0)		# load 1 bytes from msb >>> lsb
-		call DATA_WRITE
-		call delay10us
-		call delay10us
-		
-		addi a0,a0,1
-		addi x6,x6,-1
-		bnez x6,writeloop2
-		#pos 15,0			# 9 position from left on 2nd line
-		string message12	# " C"
-		lw x15,12(sp)
-		lw a0,8(sp)
-		lw x6,4(sp)
-		lw ra,0(sp)
-		addi sp,sp,16
-		ret   
-
 ######################################################################################
-division:
+ddivision:
 # Register Usage:
 # a0 = input number / quotient
 # a1 = remainder
 # t0 = bit counter (32)
 # t1 = scratch
-	li a0,0xffffffff
-	call div_u10
-here:
-	j here
+#eg	li a0,0xffffffff
+#eg	call div_u10
+#eg       ret
 
 # Input: a0 = number to divide (e.g., 100)
 # Output: a0 = quotient (e.g., 10), a1 = remainder (e.g., 0)
-div_u10:
+ddiv_u10:
     li    a1, 0           # Clear remainder
     li    t0, 32          # 32 bits to process
     mv    t1, a0          # t1 = working copy of input
     li    a0, 0           # a0 will store quotient
 
-div_loop:
+ddiv_loop:
     # Build quotient in a0
     slli  a0, a0, 1       # Shift quotient left
     
@@ -1392,7 +1363,7 @@ div_loop:
     sub   a1, a1, t2
     ori   a0, a0, 1       # Set LSB of quotient
     
-skip_sub:
+sskip_sub:
     addi  t0, t0, -1
     bnez  t0, div_loop
     
@@ -1404,6 +1375,8 @@ skip_sub:
 
 message1: .asciz "hello "
 message2: .asciz "hi"
+message3: .asciz "0"
+message7: .asciz "1"	
 
 
 
