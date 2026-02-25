@@ -6,9 +6,8 @@
 #.\riscv32-unknown-elf-ld -T CH32V003.ld --Map final.map servo2_1.O
 #.\riscv32-unknown-elf-objcopy -O ihex a.out servo2_1.hex
 
-
-# works fine on testing, PWM mode 1 , PD2 outputs the waveform of 1khz,1ms-0ms, 
-#R16_TIM2_CH2CVR decides pulse width , 0-1000 steps
+#  PD2 & PD0 outputs the waveform of 1khz, 
+# R16_TIM2_CH2CVR decides pulse width , 0-1000 steps
 # CCER register polarity if 1 low prt is controlled if polarity is 0 high part is controlled
 # timer 1 has 4 channels , each chanel from 1-3 has normal and complementary outputs that are tied to different pins
 # clock is prescaled to timer clock with PSC divider, auto reload register decides frequency, interrupt is decided by overflow.
@@ -16,13 +15,13 @@
 #52.1 = 9600
 #TIMER2 Default mapping (CH1/ETR/PD4, CH2/PD3,CH3/PC0, CH4/PD7).
 #TIMER1 Default mapping (ETR/PC5, CH1/PD2,CH2/PA1, CH3/PC3, CH4/PC4, BKIN/PC2,CH1N/PD0, CH2N/PA2, CH3N/PD1).
-#PD4 - servo output
-#PD3 - servo output
-
-#PC4  ADC input
+#PD0 - servo output
+#PD2 - servo output
+#PA1 - input pot ADC
+#PC4  ADC input motor
 #PC1  I2C SDA
 #PC2  I2C CLK
-#PD5,PD6 UART output Tx,RX
+
 
 
 
@@ -328,7 +327,7 @@
 ###############################
 .equ buffer,   0x20000004
 .equ buffer1,  0x20000008
-.equ sign,  0x2000000C
+.equ state , 0x2000000C
 .equ input_count,  0x20000010
 .equ kd_gain,  0x20000014
 .equ fraction,  0x20000018		# stores 1 second measure window overflow for slow signals
@@ -343,7 +342,7 @@
 .equ divisor, 0x2000003C
 .equ scratchpad, 0x20000040
 .equ last_error, 0x20000044
-.equ state,  0x20000048
+.equ kd_gain,	0x20000048
 .equ ki_gain, 0x2000004C
 .equ kp_gain,0x20000058
 .equ i_accum,0x2000005C
@@ -504,7 +503,8 @@ main:
 	sw x11,0(x10)			# store modified enable values in R32_RCC_APB2PCENR
 	la x10,R32_RCC_APB1PCENR
 	lw x11,0(x10)
-	ori x11,x11,(1<<0)		# timer2 clock enable
+	li x7,((1<<0)|(1<<21))
+	or x11,x11,x7			# timer2 clock enable & I2c
 	sw x11,0(x10)
 #Enable ADC prescaler in clock configuration register
 	la x10,R32_RCC_CFGR0
@@ -516,7 +516,7 @@ main:
 #configure GPIOA
 	li x10,R32_GPIOA_CFGLR				# load pointer x10 with address of R32_GPIOD_CFGLR , GPIO configuration register
 	lw x11,0(x10)					# load contents from register pointed by x10
-	li x7,~(0xf<<4)					# clear pd0,pd2 we need to setup for pwm on CH1 & CH1N , pd4 for AIN7
+	li x7,~(0xf<<4)					# clear pa1 for ADC analog
 	and x11,x11,x7					# clear pd3,pd4 mode and cnf bits for selected pin D3
 	sw x11,0(x10)		
  
@@ -530,12 +530,14 @@ main:
 	or x11,x11,x7					# OR value to register
 	sw x11,0(x10)					# store in R32_GPIOD_CFGLR
 
-#configure GPIOC 
-	li x10,R32_GPIOC_CFGLR				# load pointer x10 with address of R32_GPIOD_CFGLR , GPIO configuration register
-	lw x11,0(x10)					# load contents from register pointed by x10
-	li x7,~(0xf<<16)				# clear pc4
-	and x11,x11,x7					# clear pc4  pc4 =  analog input for adc
-	sw x11,0(x10)					# store in R32_GPIOC_CFGLR
+#configure GPIO PortC as multiplex open drain output for I2C
+	la x10,R32_GPIOC_CFGLR 				# load pointer x10 with address of R32_GPIOC_CFGLR , I2C SDA & SCL is on portC PC1,PC2
+	lw x11,0(x10) 					# load contents from register pointed by x10
+	li x7,~((0xf<<4)|(0xf<<8)|(0xf<<16)) 		# clear pc1,pc2, we need to setup PC1 & PC2 for I2C 
+	and x11,x11,x7 					# clear  mode and cnf bits for selected pin C1,C2
+	li x7,((13<<4)|(13<<8)) 			# PC1 = multiplex open drain output 10mhz ,PC2= multiplex open drain output 10mhz, 0b1101,PC4 =0b0000 analog input adc 
+	or x11,x11,x7 					# OR value to register
+	sw x11,0(x10) 					# store in R32_GPIOC_CFGLR
 
 #disable ADC before configuration
 	la x10,R32_ADC_CTLR2
@@ -544,26 +546,6 @@ main:
 	and x11,x11,x7
 	sw x11,0(x10)
 
-# --- Link Timer 1 CH2 to ADC Trigger ---
-	la x10, R32_ADC_CTLR2
-	lw x11, 0(x10)
-# 1. Select Trigger Source (EXTSEL bits 19:17)# For CH32V003: 010 = Timer 1 event Channel 2 
-	li x7, (2 << 17)  				# 010<<17      
-	or x11, x11, x7
-# 2. Enable External Trigger (EXTTRIG bit 20)
-	li x7, (1 << 20)
-	or x11, x11, x7
-	sw x11, 0(x10)
-# --- 1. Setup Injected Sequence (PA1) ---
-    	la x10, R32_ADC_ISQR
-    	li x11, (0 << 21)|(1 << 15)           		# JSQ4 = 1 (Channel 1: PA1)# For a 1-channel injected sequence,# the channel number goes in JSQ4. 
-	sw x11, 0(x10)
-
-# --- 2. Enable Auto-Injection in ADC_CTLR1 ---
-    la x10, R32_ADC_CTLR1
-    lw x11, 0(x10)
-    ori x11, x11, (1 << 10)     # JAUTO bit: Injected follows Regular
-    sw x11, 0(x10)
 
 #set sequence of conversion channel
 	la x10,R32_ADC_RSQR3				# sequence register, if multiple sensors used we can determine the order of conversion
@@ -571,7 +553,16 @@ main:
 	li x7,(2<<0)					# AIN2 , PC4 adc channel is written to sequence 1 (only one channel in this project)	
 	or x11,x11,x7
 	sw x11,0(x10)
-
+#Setup Injected Sequence (PA1) ---
+    	la x10, R32_ADC_ISQR
+    	li x11, (0 << 21)|(1 << 15)           		# JSQ4 = 1 (Channel 1: PA1)# For a 1-channel injected sequence,# the channel number goes in JSQ4. 
+	sw x11, 0(x10)
+# enable injection after regular conversion
+	la x10,R32_ADC_CTLR1
+	lw x11,0(x10)
+	li x7,(1<<10)					# JAUTO bit enable to start injection after rule chanel
+	or x11,x11,x7
+	sw x11,0(x10)
 #set sampling cycles
 	la x10,R32_ADC_SAMPTR2				# takes sampling cycles for each measurement
 	lw x11,0(x10)
@@ -582,9 +573,10 @@ main:
 #enable adc in control register2
 	la x10,R32_ADC_CTLR2
 	lw x11,0(x10)
-	li x7,(1<<0)				# no need SWSTART trigger for ADC only  ADON for internal trigger
+	li x7,((7<<17)|(1<<0))				# no need SWSTART trigger for ADC only  ADON for internal trigger
 	or x11,x11,x7
 	sw x11,0(x10)
+
 
 #reset calibrate ADC
 	la x10,R32_ADC_CTLR2
@@ -609,13 +601,55 @@ check2:
 	lw x11,0(x10)
 	andi x11,x11,(1<<2)
 	bnez x11,check2
+############
+#I2C0 configuration 
+	la x10,R32_RCC_APB1PRSTR 	# set pointer to clock control  peripheral reset register 
+	lw x11,0(x10) 			# load contents to x11
+	li x7,(1<<21) 			# shift 1 to 21st bit position
+	or x11,x11,x7 			# OR with x11
+	sw x11,0(x10) 			# set bit 21 of R32_RCC_APB1PRSTR to reset I2C peripheral
+	not x7,x7 			# invert values in x7
+	and x11,x11,x7 			# and x11 to write a 0 in 21st bit
+	sw x11,0(x10) 			# store 0 in 21st bit to restart i2c engine
 
-######################################
-#####################################################################
+	la x10,R16_I2C_CTLR2 		# set clock in control 2 register
+    	lh x11,0(x10) 			# copy contents of R16_I2C_CTLR2 to x11
+	li x7,0xffffffc0 		# clear frequency bits 0-5 with bit mask 0xffffffc0
+	and x11,x11,x7 			# AND will clear bit 0-5
+    	li x7,(8<<0) 			# 8Mhz I2C clock .default 24Mhz HSI/3 =8Mhz APB clock
+    	or x11,x11,x7 			# store APB clock frequency in bit 0-5
+	sh x11,0(x10) 			# store back in R16_I2C_CTLR2
+    	la x10,R16_I2C_CKCFGR 		# set pointer to I2C clockregister
+    	lh x11,0(x10) 			# copy values to x11 from above register
+	li x7,0xfffff000 		# clear CCR bits 0-11 with bitmask 0xfffff000
+	and x11,x11,x7 			# ANDing clears bit 0-11 in x11 register
+	li x7,(40<<0) 			# CCR = t(rscl)+t(wsclh)/tpclk1 = 1000+4000/125 =40 , or (8000000/2*100000)=40 , PCLK/2*100Khz =CCR
+    	or x11,x11,x7 			# store calculated CCR (data sheet)in x11 by OR
+	sh x11,0(x10) 			# store back in peripheral register
+	la x10,R16_I2C_CTLR1 		# set pointer to I2C control register 1
+	lh x11,0(x10) 			# copy contents
+	li x7,(1<<0) 			# 1<<PE = 1<<0 enable bit is bit0,1<<10 is ack enable bit
+	or x11,x11,x7 			# OR enable bit to x11
+	sh x11,0(x10) 			# store half word in control register 1
+	la x10,R16_I2C_CTLR1 		# set pointer to I2C control register 1
+	lh x11,0(x10) 			# copy contents
+	li x7,(1<<10) 			# 1<<10 is ack enable bit
+	or x11,x11,x7 			# OR ACK enable bit to x11
+	sh x11,0(x10) 			# store half word in control register 1
+###############################################################################
+
 
 	li a0,buffer
 	sw zero,0(a0)
-	
+	la t0,kp_gain
+	li t1,Kp
+	sw t1,0(t0)
+	la t0,ki_gain
+	li t1,Ki
+	sw t1,0(t0)
+	la t0,kd_gain
+	li t1,Kd
+	sw t1,0(t0)
 
 #####################################################################
 timer1_for_10ms:
@@ -627,23 +661,13 @@ timer1_for_10ms:
 	sw x11,0(x10)	
 #init PWM
 	la x10,R16_TIM1_CH1CVR
-	li x11,0			# start with 0 pwm,  each count is = 0.1% duty cycle
+	li x11,400			# start with 0 pwm,  each count is = 0.1% duty cycle
 	sw x11,0(x10)
 	la x10,R16_TIM1_CHCTLR1
 	lw x11,0(x10)
 	li x7,(6<<4)|(1<<3)		# CH1 mode-1(0b110=6), CH1 output compare preload enable OC2PE to reduce jitter,
 	or x11,x11,x7
 	sw x11,0(x10)
-# --- Setup Channel 2 as the Trigger Phase Delay ---
-	la x10, R16_TIM1_CH2CVR
-	li x11, 950             	# count for when ADC trigger is issued
-	sw x11, 0(x10)
-# for ADC trigger signal
-	la x10, R16_TIM1_CHCTLR1
-	lw x11, 0(x10)
-	li x7, (7 << 12)        	# OC2M = 0b111 (PWM Mode 2) for a clean rising edge
-	or x11, x11, x7
-	sw x11, 0(x10)
 
 	la x10,R16_TIM1_DMAINTENR
 	lw x11,0(x10)
@@ -689,16 +713,25 @@ PFIC_CONFIG:
 	or x11,x11,x7
 	sw x11,0(x10)			# store back new values
 
-# enabling GLOBAL INTERRUPTS
-	li t0, 0x88			# load MPIE and MIE bits , 1<<MIE in mstatus is enabling GLOBAL INTERRUPTS
-	csrw mstatus,t0 		# csrrw the values in t0,
-
 
 ######################################################
 
 
 ##########################################################################
+	call I2C_START			# start sequence sent oon I2C bus
+	la x15,LCDWAD			# load LCD address for write
+	call SEND_ADDRESS		# send LCD address
+	call LCD_INIT			# call LCD initialization routine
 
+	call delay1S			# 1 second delay
+
+	string name			# transmit name to LCD , testing display
+        call delay1S
+	call cleardisplay		# clear lcd screen
+
+# enabling GLOBAL INTERRUPTS
+	li t0, 0x88			# load MPIE and MIE bits , 1<<MIE in mstatus is enabling GLOBAL INTERRUPTS
+	csrw mstatus,t0 		# csrrw the values in t0,
 
 
 
@@ -728,32 +761,54 @@ TIM1UP_IRQhandler:
 	sw x3,8(sp)
 	sw x2,4(sp)
 	sw x1,0(sp)
-	
 ###########
 
-	la x10,R16_TIM1_INTFR
+	la x10,R32_ADC_CTLR2
 	lw x11,0(x10)
-	li x7,~1			# 0<<UIF
-	and x11,x11,x7
+	la x7,(1<<22)			# (1<<SWSTART) start conversion
+	or x11,x11,x7
 	sw x11,0(x10)
-
-check_adc_ready:
+check_Radc_ready:
     	la x10, R32_ADC_STATR       	# Load ADC Status Register
     	lw x11, 0(x10)
+    	andi x11, x11, (1 << 1)     	# Bit 1 is JEOC (End of inject Conversion is last to finish)
+    	beqz x11, check_Radc_ready   	# If NOT ready, wait (should be instant)
+	la x10, R32_ADC_RDATAR      	# Load the fresh result
+    	lw a0, 0(x10)               	# a0 = Latest Potentiometer Position motor position
+
+check_Iadc_ready:
+    	la x12, R32_ADC_STATR       	# Load ADC Status Register
+    	lw x11, 0(x12)
     	andi x11, x11, (1 << 2)     	# Bit 1 is JEOC (End of inject Conversion is last to finish)
-    	beqz x11, check_adc_ready   	# If NOT ready, wait (should be instant)
+    	beqz x11, check_Iadc_ready   	# If NOT ready, wait (should be instant)
 # Clear flags (write 0 to clear)
     	li   x7, ~( (1<<1)|(1<<2) ) 	# clear EOC + JEOC
     	and  x11, x11, x7
-    	sw   x11, 0(x10)
+    	sw   x11, 0(x12)
+
 	la   a1, R32_ADC_IDATAR1
     	lw   a1, 0(a1)             	# PA1 (injected #1) result → a1
 	la   t0,input_count
 	sw   a1,0(t0)			# manual potentiometer count in input_count
-	la x10, R32_ADC_RDATAR      	# Load the fresh result
-    	lw a0, 0(x10)               	# a0 = Latest Potentiometer Position motor position
+
+
+#la a5, result_lo
+#sw a0, 0(a5)
+#call convert_to_decimal_signed
+#pos 0,0
+#call displayresult2		# display value in LCD
+#call delay1S			# delay 1 second
+#la a5, result_lo
+#sw a1, 0(a5)
+#call convert_to_decimal_signed
+#pos 0,0
+#call displayresult2		# display value in LCD
+#call delay1S			# delay 1 second
+
+
 	
 	call calc_pid		    	# a0 now contains the "Muscle Power" (-1000 to 1000), a1 has the target count
+
 
 # 3. Handle Direction and PWM
     	bgez a0, set_cw             	# If positive, spin Clockwise
@@ -784,7 +839,14 @@ apply_speed:
     	mv a0, t1
 store_pwm:
     	la t1, R16_TIM1_CH1CVR
-    	sw a0, 0(t1)                # Update Motor Speed
+    	sw a0, 0(t1)                	# Update Motor Speed
+
+# clear interrupt flag
+	la x10,R16_TIM1_INTFR
+	lw x11,0(x10)
+	li x7,~1			# 0<<UIF
+	and x11,x11,x7
+	sw x11,0(x10)
 
 
 ############
@@ -808,8 +870,448 @@ store_pwm:
 ##########################################################################################################
 ##########################################################
 
+#######################################################################################
+#LCD ROUTINES -------------for writing commands and data  ,use x15 to supply argument
+#######################################################################################
+COMMAND_WRITE:
+		addi sp,sp,-8
+		sw ra,0(sp)
+		sw a0,4(sp)
+                la a0,scratch
+		sb x15,0(a0)
+		andi x15,x15,0xf0
+		ori x15,x15,inst_command2
+		call I2C_WRITE
+		call delay10us
+		call delay10us
+		andi x15,x15,inst_command3
+		call I2C_WRITE
+		call delay10us
+		call delay10us
+                la a0,scratch
+		lb x15,0(a0)
+		andi x15,x15,0x0f
+		slli x15,x15,4
+		ori x15,x15,inst_command2
+		call I2C_WRITE
+		call delay10us
+		call delay10us
+		andi x15,x15,inst_command3
+		call I2C_WRITE
+		call delay10us
+		call delay10us	
+		lw a0,4(sp)
+		lw ra,0(sp)
+		addi sp,sp,8	
+		ret
 
 
+DATA_WRITE:
+		addi sp,sp,-8
+		sw ra,0(sp)
+		sw a0,4(sp)
+                la a0,scratch
+		sw x15,0(a0)
+		andi x15,x15,0xf0
+		ori x15,x15,data_command2
+		call I2C_WRITE
+		call delay10us
+		call delay10us
+		andi x15,x15,data_command3
+		call I2C_WRITE
+		call delay10us
+		call delay10us
+                la a0,scratch
+		lw x15,0(a0)
+		andi x15,x15,0x0f
+		slli x15,x15,4
+		ori x15,x15,data_command2
+		call I2C_WRITE
+		call delay10us
+		call delay10us
+		andi x15,x15,data_command3
+		call I2C_WRITE
+		call delay10us
+		call delay10us
+		lw a0,4(sp)
+		lw ra,0(sp)
+		addi sp,sp,8	
+		ret		
+#################################################################################
+#hitachi LCD1602 initialization subroutine 4bit mode
+#################################################################################
+LCD_INIT:
+		addi sp,sp,-8
+		sw ra,0(sp)
+		sw x15,4(sp)
+		call delay50ms
+		li x15,0x3c
+		call I2C_WRITE
+		call delay10us
+		call delay10us
+		li x15,0x38
+		call I2C_WRITE
+		call delay10ms					
+
+		li x15,0x3c
+		call I2C_WRITE
+		call delay10us
+		call delay10us
+		li x15,0x38
+		call I2C_WRITE
+		call delay10ms	
+
+		li x15,0x3c
+		call I2C_WRITE
+		call delay10us
+		call delay10us
+		li x15,0x38
+		call I2C_WRITE
+		call delay10ms	
+
+		li x15,0x2c
+		call I2C_WRITE
+		call delay10us
+		call delay10us
+		li x15,0x28
+		call I2C_WRITE
+		call delay1ms	
+
+		li x15,0x28
+		call COMMAND_WRITE
+		call delay1ms
+		
+	
+		li x15,0x0c
+		call COMMAND_WRITE
+		call delay1ms
+		
+		li x15,0x06
+		call COMMAND_WRITE
+		call delay1ms
+				
+
+		li x15,0x01
+		call COMMAND_WRITE
+		call delay1ms
+		call delay1ms
+		
+		li x15,0x02
+		call COMMAND_WRITE
+		call delay1ms
+		call delay1ms
+
+		lw x15,4(sp)
+		lw ra,0(sp)
+		addi sp,sp,8
+		ret
+#################################################################################################
+#subroutine for LCD cursor positioning , part of MACRO pos . call macro pos 0,0-16 or pos 1,0-16
+#################################################################################################
+
+posi:
+		addi sp,sp,-4			# adjust stack pointer
+		sw ra,0(sp)			# push RA
+		beqz x6,line1			# check the first parameter of macro is 0 or a higher number,if zero go to label first line
+		li x6,0xc0			# if not zero the input is for 2nd line. load 0xC0 in r16 which is address of 2nd line first position DDRAM
+		add x6,x6,x7			# add with horizontal postion on 2nd line to get the correct DDRAM address
+		mv x15,x6			# copy new LCD DDRAM address to I2C data supply register x15
+		call COMMAND_WRITE		# send via I2C
+		call delay10us
+		call delay10us
+		call delay10us
+		call delay10us
+		call delay10us
+		lw ra,0(sp)			# pop RA
+		addi sp,sp,4			# adjust stack pointer
+		ret				# return to caller
+line1:
+		li x6,0x80			# if Y = 0 which means 1st line of LCD load address of 1st line 1st position DDRAM =0x80
+		add x6,x6,x7			# add 0x80 to X position saved in r6 to get the start postion on 1st line
+		mv x15,x6			# copy new LCD DDRAM address to X15 , argument for I2C in x15
+		call COMMAND_WRITE		# send via I2C
+		call delay10us
+		call delay10us
+		call delay10us
+		call delay10us
+		call delay10us
+		lw ra,0(sp)			# pop RA
+		addi sp,sp,4			# adjust stack pointer
+		ret				# return to caller		
+
+#################################################################################
+#subroutine for sending strings to LCD part of MACRO  string
+# reads a string with address loaded in a2,    la a2, my_string , uses x15 for I2C
+####################################################################################
+string_reader:
+	addi sp,sp,-8
+	sw ra,0(sp)
+	sw x15,4(sp)
+sr_loop:
+    	lb a5, 0(a2)             	# Load the current byte (character) into a1
+    	beq a5, zero, end_loop   	# If character is null (0), exit the loop
+	call DATA_WRITE			# send via I2C
+	call delay10us
+	call delay10us
+	call delay10us
+	call delay10us
+	addi a2,a2,1			# advance message address byte by byte
+	j sr_loop             		# Repeat the loop
+end_loop:
+	lw x15,4(sp)
+	lw ra,0(sp)
+	addi sp,sp,8
+    	ret				# Exit the program
+#################################################################################
+#subroutine to clear LCD screen 
+######################################################################################
+cleardisplay:
+		addi sp,sp,-8
+		sw ra,0(sp)
+		sw x15,4(sp)
+		li x15,0x01
+		call COMMAND_WRITE
+		call delay1ms
+		call delay1ms
+		lw x15,4(sp)
+		lw ra,0(sp)
+		addi sp,sp,8
+		ret
+
+
+
+
+######################################################
+
+#################################################################################
+#subroutine to read ASCI values from SRAM address "mem" to LCD
+#################################################################################
+
+displayresult2:        
+		addi sp,sp,-16
+		sw ra,0(sp)
+		sw x6,4(sp)
+		sw a0,8(sp)
+		sw x15,12(sp)
+		pos 0,0			# cursor at 0,0
+		li x6,10		# counter loaded with number of bytes, 6bytes for -xxx.x
+		la a0,mem		# load ddress of mem where bytes are stored
+
+writeloop2:
+		lb x15,0(a0)		# load 1 bytes from msb >>> lsb
+		call DATA_WRITE
+		call delay10us
+		call delay10us
+		
+		addi a0,a0,1
+		addi x6,x6,-1
+		bnez x6,writeloop2
+
+		lw x15,12(sp)
+		lw a0,8(sp)
+		lw x6,4(sp)
+		lw ra,0(sp)
+		addi sp,sp,16
+		ret   
+
+######################################################################################
+
+
+####----I2C--FUNCTIONS-----------------------------------------------------------------------------
+I2C_BUSY:
+	addi sp,sp,-12
+	sw ra,0(sp)
+	sw x10,4(sp)
+	sw x11,8(sp)
+IB:
+	la x10, R16_I2C_STAR2 		# set pointer x10 to I2C status register 2, busy bit resides there
+	lh x11,0(x10) 			# copy to x11 I2C_STAR2 register contents
+	andi x11,x11,(1<<1) 		# and x11 with 1<<I2CBUSY
+	bnez x11,IB 			# if not 0 loop till I2CBUSY bit becomes 0
+
+	lw x11,8(sp)
+	lw x10,4(sp)
+	lw ra,0(sp)
+	addi sp,sp,12
+	ret 
+#####################
+
+I2C_START: 				# send start condition on I2C bus
+	addi sp,sp,-20
+	sw ra,0(sp)
+	sw x12,4(sp)
+	sw x11,8(sp)
+	sw x10,12(sp)
+	sw x7,16(sp)
+
+	la x10,R16_I2C_CTLR1 		# start bit is in i2c cotrol register bit 8
+	lh x11,0(x10) 			# copy contents of control register
+	ori x11,x11,((1<<10) | (1<<8)) 	# set start bit8 and ack enable bit10
+	sh x11,0(x10) 			# store in I2C_CTL0 register
+check_master_mode_bit: 			# below code checks start bit is set , master mode bit is set and bus busy bit is set, reading STAR1 & STAR2 clears start bit
+	la x10, R16_I2C_STAR1 		# set pointer to status register1
+	lh x11,0(x10) 			# read contents to x11
+	la x10, R16_I2C_STAR2 		# set pointer to status register2
+	lh x12,0(x10) 			# read contents to x12
+	slli x12,x12,16 		# shift x12 16 position to add x11 and x12 to accomodate all status bits in 1 register (x11)
+	or x11,x11,x12 			# OR both registers , both STAR1 & STAR2 in X11
+	li x7,0x00030001 		# BUSY, MSL and SB status bits
+	and x11,x11,x7 			# ANDing yeilds the above 3 status bits
+	bne x11,x7,check_master_mode_bit # if all 3 bits not sets wait in a loop
+
+	lw x7,16(sp)
+	lw x10,12(sp)
+	lw x11,8(sp)
+	lw x12,4(sp)
+	lw ra,0(sp)
+	addi sp,sp,20
+	ret
+#####################################
+
+I2C_WRITE:
+	addi sp,sp,-12
+	sw ra,0(sp)
+	sw x10,4(sp)
+	sw x11,8(sp)
+IW:
+	la x10,R16_I2C_STAR1 		# i2c_status1 register
+	lh x11,0(x10) 			# read and copy contents
+	andi x11,x11,(1<<7) 		# and contents of x11 with TxE bit7 , if set transmission buffer empty
+	beqz x11,IW 			# wait till TBE is set (loop if a3 is 0)
+	la x10,R16_I2C_DATAR 		# set pointer to I2C data register
+	sb x15,0(x10) 			# store data loaded in x15 to I2C data register
+
+	lw x11,8(sp)
+	lw x10,4(sp)
+	lw ra,0(sp)
+	addi sp,sp,12
+	ret # return to caller
+####################################
+
+CLEAR_ACK: 				# subroutine to clear ACKEN bit in I2C_CTLR1 register
+	addi sp,sp,-12
+	sw ra,0(sp)
+	sw x10,4(sp)
+	sw x11,8(sp)
+
+	la x10,R16_I2C_CTLR1
+	lh x11,0(x10) 			# copy to x11 contents of I2C_CTL0 rgister
+	andi x11,x11,~(1<<10) 		# and with 0 shifted to ACK bit10
+	sh x11,0(x10) 			# write back to register
+
+	lw x11,8(sp)
+	lw x10,4(sp)
+	lw ra,0(sp)
+	addi sp,sp,12
+	ret 				# return to caller
+####################################
+
+I2C_TX_COMPLETE: 			# subroutine checks weather I2C transmission is complete
+	addi sp,sp,-12
+	sw ra,0(sp)
+	sw x10,4(sp)
+	sw x11,8(sp)
+TX:
+	la x10,R16_I2C_STAR1
+	lh x11,0(x10)
+	andi x11,x11,(1<<7) 		# check TBE(7) is set 
+	beqz x11,TX 			# if not wait by looping to label I2C_TX_COMPLETE 
+
+	lw x11,8(sp)
+	lw x10,4(sp)
+	lw ra,0(sp)
+	addi sp,sp,12
+	ret 				# return to caller
+#####################################
+
+I2C_STOP: 				# subroutine to stop I2C transmission
+	addi sp,sp,-12
+	sw ra,0(sp)
+	sw x10,4(sp)
+	sw x11,8(sp)
+
+	la x10,R16_I2C_CTLR1
+	lh x11,0(x10)
+	ori x11,x11,(1<<9) 		# set STOP bit9 in I2C_CTRL1 register
+	sh x11,0(x10)
+
+	lw x11,8(sp)
+	lw x10,4(sp)
+	lw ra,0(sp)
+	addi sp,sp,12
+	ret # return to caller
+#####################################
+
+SEND_ADDRESS: # sends address , address to be loaded in x15
+	addi sp,sp,-20
+	sw ra,0(sp)
+	sw x10,4(sp)
+	sw x11,8(sp)
+	sw x12,12(sp)
+	sw x7,16(sp)
+
+	la x10,R16_I2C_DATAR 		# set pointer to data register
+	sb x15,0(x10) 			# store byte in x15 to I2C data register
+address_transmit:
+	la x10, R16_I2C_STAR1 		# reading STAR1 followed by STAR2 clears the address bit
+	lh x11,0(x10)
+	la x10, R16_I2C_STAR2 		# reading STAR1 followed by STAR2 clears the address bit
+	lh x12,0(x10)
+	slli x12,x12,16 		# shift STAR2 by 16 bits LHS
+	or x11,x11,x12 			# STAR1 & STAR2 now in x11, top16 bits STAR2 , lower 15 bits STAR1 
+	li x7,0x00070082 		# BUSY, MSL, ADDR, TXE and TRA status
+	and x11,x11,x7 			# and with above bit mask to see whether these bits are set in status register
+	bne x11,x7,address_transmit 	# sit in tight loop until above bits are set in both status register
+
+	lw x7,16(sp)
+	lw x12,12(sp)
+	lw x11,8(sp)
+	lw x10,4(sp)
+	lw ra,0(sp)
+	addi sp,sp,20
+	ret
+########################################
+
+check_i2c_status:
+	addi sp,sp,-16
+	sw ra,0(sp)
+	sw x10,4(sp)
+	sw x11,8(sp)
+	sw x12,12(sp)
+
+	la x10, R16_I2C_STAR1 		# set pointer x10 to R16_I2C_STAR1 , status register 1
+	lh x11,0(x10) 			# copy contents to x11
+	la x10, R16_I2C_STAR2 		# set pointer to R16_I2C_STAR2
+	lh x12,0(x10) 			# copy contents to x12
+	slli x12,x12,16 		# shift x12 16 position to left and OR it with x11 to hold both register values in 1 32 bit register
+	or x11,x11,x12 			# status register 1 = 0-15 bits and status register2 = 16-32 bit
+	la x10,buffer 			# point x10 to SRAM buffer , address 0x20000004
+	sw x11,0(x10) 			# store status data in sram for future use
+
+	lw x12,12(sp)
+	lw x11,8(sp)
+	lw x10,4(sp)
+	lw ra,0(sp)
+	addi sp,sp,16
+	ret
+#################################################################
+#############################################
+check_btf:
+	addi sp,sp,-12
+	sw ra,0(sp)
+	sw x10,4(sp)
+	sw x11,8(sp)
+BTF:
+	la x10,R16_I2C_STAR1
+	lw x11,0(x10)
+	andi x11,x11,(1<<2)
+	beqz x11,BTF
+
+	lw x11,8(sp)
+	lw x10,4(sp)
+	lw ra,0(sp)
+	addi sp,sp,12
+	ret
 ################################################################################
 
 #==========================================
@@ -902,67 +1404,387 @@ loopus:
 	ret 
 
 
-########################################################################################################################
+
+#######################################################################################################
+# division routine, load divisor and dividend in sram before calling, result in state register ,sram
+#########################################################################################################
+
+# a1 = nimber1 # low
+# a2 = number2 # high
+# a5 = workreg
+# a3= low register = a2:a1
+# a4 =hi register = a4:a3
+# t1 carry
+
+division:
+	addi sp,sp,-24
+	sw a1,20(sp)
+	sw a2,16(sp)
+	sw a3,12(sp)
+	sw a4,8(sp)
+	sw a5,4(sp)
+	sw t1,0(sp)
+	li t1,0				# initialize t1 to 0
+	li t2,0				# initialize t2 to 0
+	li a2,0				# initialize a2 to 0
+	li a4,0				# initialize a4 to 0
+	li a5,0				# initialize a5 to 0 
+	la x10,dividend			# numerator loaded here
+	lw a1,0(x10)			# divident x11
+	la x10,divisor			# divisor in result1,x10 points to sram result1
+	lw a3,0(x10)			# load word in state to x13(divisor)
+X:
+	sub a5,a1,a3			# subtract divisor from dividend and store remainder in a5
+	sltu t1,a1,a3			# set t1 if a1 is less than a3
+	bnez t1,carry			# if t1 not equal 0 branch to carry
+	mv a1,a5			# move remainder to a1 from a5
+	sub a5,a2,a4			# subtract the high registers a4 from a2
+	addi t2,t2,1			# increase t2 by 1 for each successful subtraction (result)
+	J X				# loop to X till t1 is set
+carry:
+	la t0, state			# load address of state in t0
+	sw t2,0(t0)			# store result in t2 in state
+#	la t0, result2			# load address of result2 in t0
+#	sw a1,0(t0)			# store a1 high byte of result in result2 = 0
+	lw t1,0(sp)
+	lw a5,4(sp)
+	lw a4,8(sp)
+	lw a3,12(sp)
+	lw a2,16(sp)
+	lw a1,20(sp)
+	addi sp,sp,24
+	ret
+
+##############################################################################################
+#######################################################################################
+# ────────────────────────────────────────────────────────────────
+# signed version deimal to ASCII converter for 1602 LCD , "call convert_to_decimal_signed"
+# Input:  value in result_lo (treated as unsigned)
+# Output: ASCII digits stored backwards in mem (as before)
+# ────────────────────────────────────────────────────────────────
+convert_to_decimal_unsigned:
+    addi sp, sp, -24
+    sw ra,  0(sp)
+    sw a0,  4(sp)
+    sw gp,  8(sp)
+    sw tp, 12(sp)
+    sw t2, 16(sp)
+    sw t0, 20(sp)
+
+    la a0, result_lo
+    lw a0, 0(a0)                # load unsigned value
+
+    la gp, mem                  # result buffer
+lb t0,0(gp)
+
+li tp, 0x20202000           	# spaces   li tp, 0x20202020
+or tp,tp,t0
+    sw tp, 0(gp)
+li tp, 0x20202020
+    sw tp, 4(gp)
+    sw tp, 8(gp)
+    addi gp, gp, 9              # start from end (backwards)
+
+digit_loop_u:
+    call div_u10                # a0 = quot, tp = rem (0-9)
+    addi tp, tp, '0'
+    sb tp, 0(gp)
+    addi gp, gp, -1
+    addi t2, t2, 1
+    bnez a0, digit_loop_u
+
+    # Restore
+    lw t0, 20(sp)
+    lw t2, 16(sp)
+    lw tp, 12(sp)
+    lw gp,  8(sp)
+    lw a0,  4(sp)
+    lw ra,  0(sp)
+    addi sp, sp, 24
+    ret
+
+
+# ────────────────────────────────────────────────────────────────
+# Signed version – handles negative numbers
+# Input:  value in result_lo (signed 32-bit)
+# Output: ASCII digits in mem (with '-' if negative)
+#         Calls the unsigned version internally after handling sign
+# ────────────────────────────────────────────────────────────────
+convert_to_decimal_signed:
+    addi sp, sp, -24
+    sw ra,  0(sp)
+    sw a0,  4(sp)
+    sw gp,  8(sp)
+    sw tp, 12(sp)
+    sw t2, 16(sp)
+    sw s0, 20(sp)               # extra for sign handling
+
+    la a0, result_lo
+    lw s0, 0(a0)                # s0 = signed value
+
+    bgez s0, no_sign            # positive or zero → no '-'
+
+    # Negative number: store '-' and take absolute value
+    li   a0, '-'
+    la   gp, mem
+    sb   a0, 0(gp)              # put '-' at beginning
+    #addi gp, gp, 1              # move pointer after '-'
+    neg  s0, s0                 # s0 = |value|
+
+    # Store |value| back to result_lo so unsigned version can use it
+    la   a0, result_lo
+    sw   s0, 0(a0)
+    j process
+no_sign:
+    li   a0, 0x20
+    la   gp, mem
+    sb   a0, 0(gp)
+process:
+    # Now call the unsigned converter (it will fill from mem+1 or mem)
+    call convert_to_decimal_unsigned
+
+    # If we had negative, we already put '-' at mem+0
+    # Unsigned version wrote digits starting from mem+9 backwards
+    # → result is correct ( '-' + digits or just digits )
+
+    lw s0, 20(sp)
+    lw t2, 16(sp)
+    lw tp, 12(sp)
+    lw gp,  8(sp)
+    lw a0,  4(sp)
+    lw ra,  0(sp)
+    addi sp, sp, 24
+    ret
+
+
+# Your existing div_u10 remains unchanged (it's already good)
+div_u10:
+    addi sp,sp,-20
+    sw ra,0(sp)
+    sw a1,4(sp)
+    sw t0,8(sp)
+    sw gp,12(sp)
+    sw t2,16(sp)
+    li    a1, 0           # Clear remainder
+    li    t0, 32          # 32 bits
+    mv    gp, a0          # working copy
+    li    a0, 0           # quotient
+div_loop:
+    slli  a0, a0, 1
+    srli  t2, gp, 31
+    slli  gp, gp, 1
+    slli  a1, a1, 1
+    or    a1, a1, t2
+    li    t2, 10
+    bltu  a1, t2, skip_sub
+    sub   a1, a1, t2
+    ori   a0, a0, 1
+skip_sub:
+    addi  t0, t0, -1
+    bnez  t0, div_loop
+    mv    tp,a1           # remainder to tp
+    lw t2,16(sp)
+    lw gp,12(sp)
+    lw t0,8(sp)
+    lw a1,4(sp)
+    lw ra,0(sp)
+    addi sp,sp,20
+    ret
+######################################################################################
+ddivision:
+# Register Usage:
+# a0 = input number / quotient
+# a1 = remainder
+# t0 = bit counter (32)
+# t1 = scratch
+#eg	li a0,0xffffffff
+#eg	call div_u10
+#eg       ret
+
+# Input: a0 = number to divide (e.g., 100)
+# Output: a0 = quotient (e.g., 10), a1 = remainder (e.g., 0)
+ddiv_u10:
+    li    a1, 0           # Clear remainder
+    li    t0, 32          # 32 bits to process
+    mv    t1, a0          # t1 = working copy of input
+    li    a0, 0           # a0 will store quotient
+
+ddiv_loop:
+    # Build quotient in a0
+    slli  a0, a0, 1       # Shift quotient left
+    
+    # Process next bit
+    slli  t1, t1, 1       # Shift input left
+    srli  t2, t1, 31      # Get MSB
+    slli  a1, a1, 1       # Shift remainder left
+    or    a1, a1, t2      # Insert new bit
+    
+    # Check if remainder >= 10
+    li    t2, 10
+    bltu  a1, t2, skip_sub
+    
+    # Adjust remainder and set quotient bit
+    sub   a1, a1, t2
+    ori   a0, a0, 1       # Set LSB of quotient
+    
+sskip_sub:
+    addi  t0, t0, -1
+    bnez  t0, div_loop
+    
+    ret        # Result: a0=quotient, a1=remainder
+###################################################################################
 
 
 
-# --- PID CALCULATION BLOCK ---
-# Input:  a0 = Current Position (from ADC)
-#         a1 = Target Position
-# Output: a0 = Calculated PWM Power (-1000 to 1000)
 
 calc_pid:
-	addi sp,sp,-8
-	sw ra,0(sp)
-	sw s1,4(sp)
-	sub a0, a1, a0              		# a0 = Error (Target - Current)  
-	mv t0,a0				# copy of error in t0  
-# --- P TERM ---
-    	la t1, kp_gain
-	lw a1, 0(t1)
-    	call signed_multiply_booth		# result_lo = P_out (Error * Kp)
-	li t1,result_lo
-	lw s1,0(t1)				# s1 = P_out (Error * Kp)
-# --- I TERM ---
-    	la t1, i_accum
-    	lw t2, 0(t1)
-    	add t2, t2, t0              		# Accumulate error
-# Anti-Windup (Cap the I-term at +/- 200)
-    	li gp, 200
-    	ble t2, gp, i_low
-    	mv t2, gp
-i_low:
-    	li gp, -200
-    	bge t2, gp, i_store
-    	mv t2, gp
-i_store:
-    	sw t2, 0(t1)                		# Save I-accumulator
-    	la t1, ki_gain
-    	lw gp, 0(t1)
-	mv a0,gp
-	mv a1,t2
-	call signed_multiply_booth		# result_lo = I_out (Accumulator * Ki)
-# --- D TERM (Prevents Overshoot) ---
-    	la t1, last_error
-    	lw t2, 0(t1)                		# Load previous error
-    	sub gp, t0, t2              		# gp = Delta_Error (Current - Last)
-    	sw t0, 0(t1)                		# Save current error for next 1ms
-	la t1,result_lo			    	# need to save I_out from result_lo before next multiplication
-	lw t0,0(t0)			    	# t0 = I_out (Accumulator * Ki)
-    	la t1, kd_gain
-    	lw a0, 0(t1)
-	mv a1,gp
-	call signed_multiply_booth		#result_lo = D_out (Delta * Kd)
-	la t1,result_lo
-	lw tp,0(t1)			    	#  tp = D_out (Delta * Kd)
-# --- COMBINE PID ---
-    	add a0, s1, t0              		# P + I
-    	add a0, a0, tp              		# (P + I) + D
-	lw s1,4(sp)
-	lw ra,0(sp)
-	addi sp,sp,8
-    	ret
+    addi sp, sp, -32
+    sw ra, 0(sp)
+    sw s1, 4(sp)
+    sw s0, 8(sp)
+    sw gp, 12(sp)
+    sw t0, 16(sp)
+    sw t1, 20(sp)
+    sw tp, 24(sp)
+    sw t2, 28(sp)
+    sub t0, a1, a0              # t0 = error = target - current (integer)
 
+#la a5, result_lo
+#sw t0, 0(a5)
+#call convert_to_decimal_signed
+#pos 0,0
+#call displayresult2		# display value in LCD
+#call delay1S			# delay 1 second
+
+
+
+
+###### -1023 in t0
+
+
+    # --- P TERM ---
+    la t1, kp_gain
+    lw a1, 0(t1)                # a1 = Kp (Q16.16)
+    mv a0, t0                   # a0 = error
+    call signed_multiply_booth
+
+    # Get scaled P (>>16 from low word — good enough for |error| < 2048)
+    la t1, result_lo
+    lw t1, 0(t1)
+    srai s1, t1, 16             # s1 = P term (integer-ish)
+
+
+#la a5, result_lo
+#sw s1, 0(a5)
+#call convert_to_decimal_signed
+#pos 0,0
+#call displayresult2		# display value in LCD
+#call delay1S			# delay 1 second
+
+
+
+
+
+    # --- I TERM ---
+    la t1, i_accum
+    lw t2, 0(t1)
+    add t2, t2, t0              # accum += error
+
+    # Anti-windup (adjust limit to your needs, e.g. ±500–1000)
+    li t1, 500
+    ble t2, t1, i_low
+    mv t2, t1
+i_low:
+    li t1, -500
+    bge t2, t1, i_store
+    mv t2, t1
+i_store:
+    la t1, i_accum
+    sw t2, 0(t1)
+
+    la t1, ki_gain
+    lw a1, 0(t1)
+    mv a0, t2
+    call signed_multiply_booth
+
+    la t1, result_lo
+    lw t1, 0(t1)
+    srai s0, t1, 16             # s0 = I term
+
+
+
+#la a5, result_lo
+#sw s0, 0(a5)
+#call convert_to_decimal_signed
+#pos 0,0
+#call displayresult2		# display value in LCD
+#call delay1S			# delay 1 second
+
+
+
+
+
+
+
+
+
+    # --- D TERM ---
+    la t1, last_error
+    lw t2, 0(t1)
+    sub tp, t0, t2              # delta = current_error - last_error
+    sw t0, 0(t1)                # update last_error
+
+    la t1, kd_gain
+    lw a1, 0(t1)
+    mv a0, tp
+    call signed_multiply_booth
+
+    la t1, result_lo
+    lw t1, 0(t1)
+    srai gp, t1, 12             # D usually keeps more bits (>>12 example)
+
+
+
+
+
+#la a5, result_lo
+#sw gp, 0(a5)
+#call convert_to_decimal_signed
+#pos 0,0
+#call displayresult2		# display value in LCD
+#call delay1S			# delay 1 second
+
+
+
+
+
+
+
+
+    # --- Combine ---
+    add a0, s1, s0              # P + I
+    add a0, a0, gp              # + D
+
+    # Saturate PWM to -1000 .. +1000 (critical!)
+    li t1, 1000
+    li t2, -1000
+    bge a0, t2, no_min
+    mv a0, t2
+    j pid_done
+no_min:
+    ble a0, t1, pid_done
+    mv a0, t1
+pid_done:
+    lw t2, 28(sp)
+    lw tp, 24(sp)
+    lw t1, 20(sp)
+    lw t0, 16(sp)
+    lw gp, 12(sp)
+    lw s0, 8(sp)
+    lw s1, 4(sp)
+    lw ra, 0(sp)
+    addi sp, sp, 32
+    ret
 
 
 
@@ -971,7 +1793,7 @@ i_store:
 ############################################################################################################
 
 signed_multiply_booth:
-    addi sp, sp, -28
+    addi sp, sp, -36
     sw ra, 0(sp)
     sw s0, 4(sp)
     sw s1, 8(sp)
@@ -979,6 +1801,8 @@ signed_multiply_booth:
     sw a3, 16(sp) 
     sw a4, 20(sp)
     sw a5, 24(sp)
+    sw t0, 28(sp)
+    sw t1,32(sp)
 
     # Load operands
     
@@ -1042,7 +1866,24 @@ shift:
     lw a3, 16(sp)
     lw a4, 20(sp)
     lw a5, 24(sp)
-    addi sp, sp, 28
+    lw t0,28(sp)
+    lw t1,32(sp)
+    addi sp, sp, 36
     ret
+##################################################################################
+.align 4
+.section .rodata
+.global message
+
+message1: .asciz "hello "
+message2: .asciz "hi"
+message3: .asciz "0"
+message7: .asciz "1"	
+name: .asciz "SAJEEV SANKARAN CH32V003 UART"
+
+
+
+
+
 
 
