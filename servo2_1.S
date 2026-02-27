@@ -1,27 +1,30 @@
-#riscv32-unknown-elf-as -g servo2_1.S -o servo2_1.O
-#riscv32-unknown-elf-ld -T CH32V003.ld -Map=final.map servo2_1.O
-#riscv32-unknown-elf-objcopy -O ihex a.out servo2_1.hex
-# new linker version
-#.\riscv32-unknown-elf-as -g servo2_1.S -o servo2_1.O
-#.\riscv32-unknown-elf-ld -T CH32V003.ld --Map final.map servo2_1.O
-#.\riscv32-unknown-elf-objcopy -O ihex a.out servo2_1.hex
 
-#  PD2 & PD0 outputs the waveform of 1khz, 
-# R16_TIM2_CH2CVR decides pulse width , 0-1000 steps
-# CCER register polarity if 1 low prt is controlled if polarity is 0 high part is controlled
-# timer 1 has 4 channels , each chanel from 1-3 has normal and complementary outputs that are tied to different pins
-# clock is prescaled to timer clock with PSC divider, auto reload register decides frequency, interrupt is decided by overflow.
-# number of intrrupts is counted to get isr based deceisions else isr resets interrupt flags
-#52.1 = 9600
+
+
+#riscv32-unknown-elf-as -g ADC_GCC_ver1.S -o ADC_GCC_ver1.O
+#riscv32-unknown-elf-ld -T CH32V003.ld -Map=final.map ADC_GCC_ver1.O
+#riscv32-unknown-elf-objcopy -O ihex a.out ADC_GCC_ver1.hex
+
+# new linker version
+#.\riscv32-unknown-elf-as -g ADC_GCC_ver1.S -o ADC_GCC_ver1.O
+#.\riscv32-unknown-elf-ld -T CH32V003.ld --Map final.map ADC_GCC_ver1.O
+#.\riscv32-unknown-elf-objcopy -O ihex a.out ADC_GCC_ver1.hex
+
+# ADC is set to read PC4 for motor position as regular channel
+# ADC to read input/target potentiometer is on PA1 as injected channel
+# ADC is triggered by PWM signal from timer1 CH2 internally. first pc4 is converted then due to JAUTO bit injected chanel follows automatically
+# ADC results stored in RDATAR & IDATAR
+# motor controlled by PWM1 on CH1 & CH1N. PC2 & PD0 , value updated by timer1 ISR every 1ms
+
 #TIMER2 Default mapping (CH1/ETR/PD4, CH2/PD3,CH3/PC0, CH4/PD7).
 #TIMER1 Default mapping (ETR/PC5, CH1/PD2,CH2/PA1, CH3/PC3, CH4/PC4, BKIN/PC2,CH1N/PD0, CH2N/PA2, CH3N/PD1).
-#PD0 - servo output
-#PD2 - servo output
-#PA1 - input pot ADC
-#PC4  ADC input motor
+#PD4 - servo output
+#PD3 - servo output
+
+#PC4  ADC input
 #PC1  I2C SDA
 #PC2  I2C CLK
-
+#PD5,PD6 UART output Tx,RX
 
 
 
@@ -33,14 +36,7 @@
 #PD5 = A5
 #PD6 = A6
 #PD4 = A7
-#l Rule group: consists of up to 16 conversions. The rule channels and their conversion order are set in the
-#ADC_RSQRx register. The total number of conversions in the rule group should be written to RLEN[3:0]
-#in the ADC_RSQR1 register.
-#l Injection group: consists of up to 4 conversions. The injection channels and the order of their conversions
-#are set in the ADC_ISQR register. The total number of conversions in the injection group should be
-#written in ILEN[1:0] of the ADC_ISQR register.
-#Initialize the calibration register by writing RSTCAL position 1 of ADC_CTLR2 register and wait for
-#RSTCALhardware to clear 0 to indicate the completion of initialization
+
 
 
 
@@ -395,7 +391,21 @@
   addi sp,sp,4
 .endm
 
-
+.macro debug tp
+  addi sp,sp,-8
+  sw a5,0(sp)
+  sw gp,4(sp)
+  la a5, result_lo
+  mv gp,\tp
+  sw gp, 0(a5)
+  call convert_to_decimal_signed
+  pos 0,0
+  call displayresult2		# display value in LCD
+  call delay1S			# delay 1 second
+  lw gp,4(sp)
+  lw a5,0(sp)
+  addi sp,sp,8
+.endm
 
 .align 9
 vtable:
@@ -514,26 +524,26 @@ main:
 	sw x11,0(x10)
 
 #configure GPIOA
-	li x10,R32_GPIOA_CFGLR				# load pointer x10 with address of R32_GPIOD_CFGLR , GPIO configuration register
+	li x10,R32_GPIOA_CFGLR				# load pointer x10 with address of R32_GPIOA_CFGLR , GPIO configuration register
 	lw x11,0(x10)					# load contents from register pointed by x10
 	li x7,~(0xf<<4)					# clear pa1 for ADC analog
-	and x11,x11,x7					# clear pd3,pd4 mode and cnf bits for selected pin D3
+	and x11,x11,x7					# clear pa1
 	sw x11,0(x10)		
  
 
 #configure GPIOD 
 	li x10,R32_GPIOD_CFGLR				# load pointer x10 with address of R32_GPIOD_CFGLR , GPIO configuration register
 	lw x11,0(x10)					# load contents from register pointed by x10
-	li x7,~((0xf<<0)|(0xf<<8)|(0xf<<16))		# clear pd0,pd2 we need to setup for pwm on CH1 & CH1N , pd4 for AIN7
-	and x11,x11,x7					# clear pd3,pd4 mode and cnf bits for selected pin D3
-	li x7,((0xB<<0)|(0xB<<8)|(0x3<<16))		# pd0,pd4 =  multiplex pushpull for ch1 pwm capture compare output,pd4 pushpull
+	li x7,~((0xf<<0)|(0xf<<8)|(0xf<<16))		# clear pd0,pd2 we need to setup for pwm on CH1 & CH1N , pd4 for other pushull apps
+	and x11,x11,x7					# clear pd0,pd2,pd4 mode and cnf bits for selected pin D3
+	li x7,((0xB<<0)|(0xB<<8)|(0x3<<16))		# pd0,pd2 =  multiplex pushpull for ch1 pwm capture compare output,pd4 pushpull
 	or x11,x11,x7					# OR value to register
 	sw x11,0(x10)					# store in R32_GPIOD_CFGLR
 
 #configure GPIO PortC as multiplex open drain output for I2C
 	la x10,R32_GPIOC_CFGLR 				# load pointer x10 with address of R32_GPIOC_CFGLR , I2C SDA & SCL is on portC PC1,PC2
 	lw x11,0(x10) 					# load contents from register pointed by x10
-	li x7,~((0xf<<4)|(0xf<<8)|(0xf<<16)) 		# clear pc1,pc2, we need to setup PC1 & PC2 for I2C 
+	li x7,~((0xf<<4)|(0xf<<8)|(0xf<<16)) 		# clear pc1,pc2, we need to setup PC1 & PC2 for I2C ,PC4 for adc
 	and x11,x11,x7 					# clear  mode and cnf bits for selected pin C1,C2
 	li x7,((13<<4)|(13<<8)) 			# PC1 = multiplex open drain output 10mhz ,PC2= multiplex open drain output 10mhz, 0b1101,PC4 =0b0000 analog input adc 
 	or x11,x11,x7 					# OR value to register
@@ -546,39 +556,46 @@ main:
 	and x11,x11,x7
 	sw x11,0(x10)
 
-
 #set sequence of conversion channel
 	la x10,R32_ADC_RSQR3				# sequence register, if multiple sensors used we can determine the order of conversion
 	lw x11,0(x10)
-	li x7,(2<<0)					# AIN2 , PC4 adc channel is written to sequence 1 (only one channel in this project)	
+	li x7,(2<<0)					# AIN2 , PC4 adc channel is written to sequence 1 (only one rule channel in this project)	
 	or x11,x11,x7
 	sw x11,0(x10)
-#Setup Injected Sequence (PA1) ---
+
+# Link Timer 1 CH2 to ADC Trigger ---
+	la x10, R32_ADC_CTLR2
+	lw x11, 0(x10)
+# 1. Select Trigger Source (EXTSEL bits 19:17)		# For CH32V003: 010 = Timer 1 event Channel 2 
+	li x7, (2 << 17)  				# 010<<17    ADC starts conversion based on a rising signal event on timer1 CH2  
+	or x11, x11, x7
+# 2. Enable External Trigger (EXTTRIG bit 20)
+	li x7, (1 << 20)				# switch on external trigger
+	or x11, x11, x7
+	sw x11, 0(x10)
+# 3. Setup Injected Sequence (PA1) ---			# we use injection channel to read user input to avoid DMA use , result in IDATAR
     	la x10, R32_ADC_ISQR
     	li x11, (0 << 21)|(1 << 15)           		# JSQ4 = 1 (Channel 1: PA1)# For a 1-channel injected sequence,# the channel number goes in JSQ4. 
 	sw x11, 0(x10)
-# enable injection after regular conversion
-	la x10,R32_ADC_CTLR1
-	lw x11,0(x10)
-	li x7,(1<<10)					# JAUTO bit enable to start injection after rule chanel
-	or x11,x11,x7
-	sw x11,0(x10)
 #set sampling cycles
 	la x10,R32_ADC_SAMPTR2				# takes sampling cycles for each measurement
 	lw x11,0(x10)
-	li x7,((1<<3)|(1<<6))					# 0b001 is 9 cycles for AIN1,AIN2	
+	li x7,((1<<3)|(1<<6))				# 0b001 is 9 cycles for AIN1,AIN2	
 	or x11,x11,x7
 	sw x11,0(x10)
-
+# enable injection after regular conversion
+	la x10,R32_ADC_CTLR1
+	lw x11,0(x10)
+	li x7,(1<<10)					# JAUTO bit enable to start injection after rule chanel automatically
+	or x11,x11,x7
+	sw x11,0(x10)
 #enable adc in control register2
 	la x10,R32_ADC_CTLR2
 	lw x11,0(x10)
-	li x7,((7<<17)|(1<<0))				# no need SWSTART trigger for ADC only  ADON for internal trigger
+	li x7,(1<<0)					#   ADON 
 	or x11,x11,x7
 	sw x11,0(x10)
-
-
-#reset calibrate ADC
+#reset calibrate ADC					# ADC to be calibrated to correct any offset
 	la x10,R32_ADC_CTLR2
 	lw x11,0(x10)
 	li x7,(1<<3)					# reset calibration	
@@ -637,8 +654,7 @@ check2:
 	or x11,x11,x7 			# OR ACK enable bit to x11
 	sh x11,0(x10) 			# store half word in control register 1
 ###############################################################################
-
-
+# load PID gain factor in SRAM
 	li a0,buffer
 	sw zero,0(a0)
 	la t0,kp_gain
@@ -669,6 +685,23 @@ timer1_for_10ms:
 	or x11,x11,x7
 	sw x11,0(x10)
 
+# Setup Channel 2 as the ADC Trigger .Phase Delay to avoid motor noise interference---
+	la x10, R16_TIM1_CH2CVR
+	li x11, 800             	# count for when ADC trigger is issued
+	sw x11, 0(x10)
+# for ADC trigger signal
+	la x10, R16_TIM1_CHCTLR1
+	lw x11, 0(x10)
+	li x7,(7<<12)         		# OC2M = 0b111=7(PWM Mode 2) for a clean rising edge when compare match counter
+	or x11, x11, x7
+	sw x11, 0(x10)
+
+	la t0,R16_TIM1_CCER
+	lw x11,0(t0)	
+	li x7,(1<<4)			# enable CC2E bit for output on chanel2, if not enabled no signal from timer on chanel2
+	or x11,x11,x7
+	sw x11,0(t0)
+
 	la x10,R16_TIM1_DMAINTENR
 	lw x11,0(x10)
 	li x7,(1<<0)			# enable update interrupt
@@ -693,7 +726,7 @@ timer1_for_10ms:
 	la x10,R16_TIM1_BDTR
 	lw x11,0(x10)
 	li x7,(1<<15)			# enable MoE
-	ori x7, x7, 160        		# Add 20us Dead-time (DTG bits 0-7)
+	ori x7, x7, 160        		# Add 20us Dead-time (DTG bits 0-7),prevents shooy through short circuit. both outputs off befors flipping
 	or x11,x11,x7
 	sw x11,0(x10)
 
@@ -737,7 +770,7 @@ PFIC_CONFIG:
 
 itr: 	
 			
-	j itr
+	j itr				# waiting in tight loop till interrupt fires , ADC measurement and motor control in ISR every 1ms
 
 	
 
@@ -761,18 +794,26 @@ TIM1UP_IRQhandler:
 	sw x3,8(sp)
 	sw x2,4(sp)
 	sw x1,0(sp)
-###########
 
-	la x10,R32_ADC_CTLR2
-	lw x11,0(x10)
-	la x7,(1<<22)			# (1<<SWSTART) start conversion
-	or x11,x11,x7
-	sw x11,0(x10)
+######################################################
+#la t0,R32_ADC_STATR
+#lw t0,0(t0)
+#la a5, result_lo
+#sw t0, 0(a5)
+#call convert_to_decimal_signed
+#pos 0,0
+#call displayresult2		# display value in LCD
+#call delay1S			# delay 1 second
+#######################################################
 check_Radc_ready:
     	la x10, R32_ADC_STATR       	# Load ADC Status Register
     	lw x11, 0(x10)
     	andi x11, x11, (1 << 1)     	# Bit 1 is JEOC (End of inject Conversion is last to finish)
     	beqz x11, check_Radc_ready   	# If NOT ready, wait (should be instant)
+# Clear flags (write 0 to clear)
+    	#li   x7, ~(1<<1) 		# clear EOC 
+	#and x11,x11,x7
+    	#sw   x11, 0(x10)
 	la x10, R32_ADC_RDATAR      	# Load the fresh result
     	lw a0, 0(x10)               	# a0 = Latest Potentiometer Position motor position
 
@@ -781,31 +822,14 @@ check_Iadc_ready:
     	lw x11, 0(x12)
     	andi x11, x11, (1 << 2)     	# Bit 1 is JEOC (End of inject Conversion is last to finish)
     	beqz x11, check_Iadc_ready   	# If NOT ready, wait (should be instant)
-# Clear flags (write 0 to clear)
-    	li   x7, ~( (1<<1)|(1<<2) ) 	# clear EOC + JEOC
-    	and  x11, x11, x7
+#clear flags
+	li   x7, ~( (1<<1)|(1<<2) ) 	# clear EOC + JEOC
+	and x11,x11,x7
     	sw   x11, 0(x12)
-
 	la   a1, R32_ADC_IDATAR1
     	lw   a1, 0(a1)             	# PA1 (injected #1) result → a1
 	la   t0,input_count
 	sw   a1,0(t0)			# manual potentiometer count in input_count
-
-
-#la a5, result_lo
-#sw a0, 0(a5)
-#call convert_to_decimal_signed
-#pos 0,0
-#call displayresult2		# display value in LCD
-#call delay1S			# delay 1 second
-#la a5, result_lo
-#sw a1, 0(a5)
-#call convert_to_decimal_signed
-#pos 0,0
-#call displayresult2		# display value in LCD
-#call delay1S			# delay 1 second
-
-
 	
 	call calc_pid		    	# a0 now contains the "Muscle Power" (-1000 to 1000), a1 has the target count
 
@@ -1649,19 +1673,6 @@ calc_pid:
     sw t2, 28(sp)
     sub t0, a1, a0              # t0 = error = target - current (integer)
 
-#la a5, result_lo
-#sw t0, 0(a5)
-#call convert_to_decimal_signed
-#pos 0,0
-#call displayresult2		# display value in LCD
-#call delay1S			# delay 1 second
-
-
-
-
-###### -1023 in t0
-
-
     # --- P TERM ---
     la t1, kp_gain
     lw a1, 0(t1)                # a1 = Kp (Q16.16)
@@ -1672,17 +1683,6 @@ calc_pid:
     la t1, result_lo
     lw t1, 0(t1)
     srai s1, t1, 16             # s1 = P term (integer-ish)
-
-
-#la a5, result_lo
-#sw s1, 0(a5)
-#call convert_to_decimal_signed
-#pos 0,0
-#call displayresult2		# display value in LCD
-#call delay1S			# delay 1 second
-
-
-
 
 
     # --- I TERM ---
@@ -1711,23 +1711,6 @@ i_store:
     lw t1, 0(t1)
     srai s0, t1, 16             # s0 = I term
 
-
-
-#la a5, result_lo
-#sw s0, 0(a5)
-#call convert_to_decimal_signed
-#pos 0,0
-#call displayresult2		# display value in LCD
-#call delay1S			# delay 1 second
-
-
-
-
-
-
-
-
-
     # --- D TERM ---
     la t1, last_error
     lw t2, 0(t1)
@@ -1742,24 +1725,6 @@ i_store:
     la t1, result_lo
     lw t1, 0(t1)
     srai gp, t1, 12             # D usually keeps more bits (>>12 example)
-
-
-
-
-
-#la a5, result_lo
-#sw gp, 0(a5)
-#call convert_to_decimal_signed
-#pos 0,0
-#call displayresult2		# display value in LCD
-#call delay1S			# delay 1 second
-
-
-
-
-
-
-
 
     # --- Combine ---
     add a0, s1, s0              # P + I
@@ -1785,8 +1750,6 @@ pid_done:
     lw ra, 0(sp)
     addi sp, sp, 32
     ret
-
-
 
 ############################################################################################################
 # signed multiplication, call with arguments in buffer & buffer1. answer in result_hi,result_lo
@@ -1880,8 +1843,6 @@ message2: .asciz "hi"
 message3: .asciz "0"
 message7: .asciz "1"	
 name: .asciz "SAJEEV SANKARAN CH32V003 UART"
-
-
 
 
 
