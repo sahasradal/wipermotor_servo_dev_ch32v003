@@ -829,22 +829,26 @@ check_Iadc_ready:
     	bgez a0, set_cw             	# If positive, spin Clockwise
     
 set_ccw:
-    	neg a0, a0                  	# Make power positive for PWM register
+    neg a0, a0              # Make power positive for PWM register
 	la t0,R16_TIM1_CCER
 	lw x11,0(t0)			# CC1NP & CC1NE.Compare capture channel 1 complementary output polaity setting bit & enable bit
-	andi x11,x11,~(1<<0)		# clear CC1P & CC1E
-	li x7,(3<<2)			# active part is negative,complimentary,off part is controlled
+	andi x11,x11,~(1<<0)	# clear CC1P & CC1E
+	#li x7,(3<<2)			# active part is negative,complimentary,off part is controlled(enabling this makes motor speed high in CCW)
+	li x7,(1<<2)			# active part is positive(ON side), CCW & CW same speed = both directions have ON side controlled
 	or x11,x11,x7			# 40% high, 60% low on pd0 TIM1CH1N
 	sw x11,0(t0)
-    	j apply_speed
+    j apply_speed
 
 set_cw:
-    	la t0,R16_TIM1_CCER
+    la t0,R16_TIM1_CCER
 	lw x11,0(t0)			# CC1P & CC1E.Compare capture channel 1  output polaity setting bit 0 & enable bit 1
-	andi x11,x11,~(3<<2)
+	#andi x11,x11,~(3<<2)
+	andi x11,x11,~(1<<2)	# disable complimentary output
 	li x7,(1<<0)			# active part is positive ,complimentary,off part is controlled
 	or x11,x11,x7			# 40% high, 60% low on pd2 TIM1CH1
 	sw x11,0(t0)			# same as above
+
+
 
 
 apply_speed:
