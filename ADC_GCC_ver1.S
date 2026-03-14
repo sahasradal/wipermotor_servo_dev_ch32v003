@@ -490,10 +490,10 @@ start:
     	la t0, vtable			#BASEADDR[31:2],The interrupt vector table base address,which needs to be 1KB aligned
     	ori t0, t0, 3			#BASEADDR[31:2],1: Identify by absolute address,1: Address offset based on interrupt number *4
     	csrrw zero, mtvec,t0		# write t0 mtvec
-   	la t0,main
-	csrw	mepc,t0
+   		la t0,main
+		csrw	mepc,t0
           				#csrw	mepc,t0 :mepc updated with address of main
-	mret
+		mret
 
   
 .align 4
@@ -503,7 +503,7 @@ main:
 
 #Enable GPIO clocks & AFIO in APB2 clock register
         
-    	la x10,R32_RCC_APB2PCENR	# load address of APB2PCENR register to x10 ,for enabling GPIO A,D,C peripherals
+    la x10,R32_RCC_APB2PCENR	# load address of APB2PCENR register to x10 ,for enabling GPIO A,D,C peripherals
 	lw x11,0(x10)			# load contents from peripheral register R32_RCC_APB2PCENR pointed by x10
 	li x7,((1<<2)|(1<<4)|(1<<5)|(1<<0)|(1<<14)|(1<<9)|(1<<11))	# 1<<IOPA_EN,1<<IOPC_EN,1<<IOPD_EN,1<<AFIOEN,1<<USART ,1<<ADC enable port A,C,D and AFIO functions,1<<TIM1
 	or x11,x11,x7			# or values 
@@ -571,8 +571,8 @@ main:
 	or x11, x11, x7
 	sw x11, 0(x10)
 # 3. Setup Injected Sequence (PA1) ---			# we use injection channel to read user input to avoid DMA use , result in IDATAR
-    	la x10, R32_ADC_ISQR
-    	li x11, (0 << 21)|(1 << 15)           		# JSQ4 = 1 (Channel 1: PA1)# For a 1-channel injected sequence,# the channel number goes in JSQ4. 
+    la x10, R32_ADC_ISQR
+    li x11, (0 << 21)|(1 << 15)           		# JSQ4 = 1 (Channel 1: PA1)# For a 1-channel injected sequence,# the channel number goes in JSQ4. 
 	sw x11, 0(x10)
 #set sampling cycles
 	la x10,R32_ADC_SAMPTR2				# takes sampling cycles for each measurement
@@ -627,18 +627,18 @@ check2:
 	sw x11,0(x10) 			# store 0 in 21st bit to restart i2c engine
 
 	la x10,R16_I2C_CTLR2 		# set clock in control 2 register
-    	lh x11,0(x10) 			# copy contents of R16_I2C_CTLR2 to x11
+    lh x11,0(x10) 			# copy contents of R16_I2C_CTLR2 to x11
 	li x7,0xffffffc0 		# clear frequency bits 0-5 with bit mask 0xffffffc0
 	and x11,x11,x7 			# AND will clear bit 0-5
-    	li x7,(8<<0) 			# 8Mhz I2C clock .default 24Mhz HSI/3 =8Mhz APB clock
-    	or x11,x11,x7 			# store APB clock frequency in bit 0-5
+    li x7,(8<<0) 			# 8Mhz I2C clock .default 24Mhz HSI/3 =8Mhz APB clock
+    or x11,x11,x7 			# store APB clock frequency in bit 0-5
 	sh x11,0(x10) 			# store back in R16_I2C_CTLR2
-    	la x10,R16_I2C_CKCFGR 		# set pointer to I2C clockregister
-    	lh x11,0(x10) 			# copy values to x11 from above register
+    la x10,R16_I2C_CKCFGR 		# set pointer to I2C clockregister
+    lh x11,0(x10) 			# copy values to x11 from above register
 	li x7,0xfffff000 		# clear CCR bits 0-11 with bitmask 0xfffff000
 	and x11,x11,x7 			# ANDing clears bit 0-11 in x11 register
 	li x7,(40<<0) 			# CCR = t(rscl)+t(wsclh)/tpclk1 = 1000+4000/125 =40 , or (8000000/2*100000)=40 , PCLK/2*100Khz =CCR
-    	or x11,x11,x7 			# store calculated CCR (data sheet)in x11 by OR
+    or x11,x11,x7 			# store calculated CCR (data sheet)in x11 by OR
 	sh x11,0(x10) 			# store back in peripheral register
 	la x10,R16_I2C_CTLR1 		# set pointer to I2C control register 1
 	lh x11,0(x10) 			# copy contents
@@ -756,7 +756,7 @@ PFIC_CONFIG:
 	call delay1S			# 1 second delay
 
 	string name			# transmit name to LCD , testing display
-        call delay1S
+    call delay1S
 	call cleardisplay		# clear lcd screen
 
 # enabling GLOBAL INTERRUPTS
@@ -809,9 +809,9 @@ check_Radc_ready:
     	beqz x11, check_Radc_ready   	# If NOT ready, wait (should be instant)
 # Clear flags (write 0 to clear)
     	#li   x7, ~(1<<1) 		# clear EOC 
-	#and x11,x11,x7
+		#and x11,x11,x7
     	#sw   x11, 0(x10)
-	la x10, R32_ADC_RDATAR      	# Load the fresh result
+		la x10, R32_ADC_RDATAR      	# Load the fresh result
     	lw a0, 0(x10)               	# a0 = Latest Potentiometer Position motor position
 
 check_Iadc_ready:
@@ -820,15 +820,15 @@ check_Iadc_ready:
     	andi x11, x11, (1 << 2)     	# Bit 1 is JEOC (End of inject Conversion is last to finish)
     	beqz x11, check_Iadc_ready   	# If NOT ready, wait (should be instant)
 #clear flags
-	li   x7, ~( (1<<1)|(1<<2) ) 	# clear EOC + JEOC
-	and x11,x11,x7
+		li   x7, ~( (1<<1)|(1<<2) ) 	# clear EOC + JEOC
+		and x11,x11,x7
     	sw   x11, 0(x12)
-	la   a1, R32_ADC_IDATAR1
+		la   a1, R32_ADC_IDATAR1
     	lw   a1, 0(a1)             	# PA1 (injected #1) result → a1
-	la   t0,input_count
-	sw   a1,0(t0)			# manual potentiometer count in input_count
+		la   t0,input_count
+		sw   a1,0(t0)			# manual potentiometer count in input_count
 	
-	call calc_pid		    	# a0 now contains the "Muscle Power" (-1000 to 1000), a1 has the target count
+		call calc_pid		    	# a0 now contains the "Muscle Power" (-1000 to 1000), a1 has the target count
 
 
 # 3. Handle Direction and PWM
@@ -836,23 +836,23 @@ check_Iadc_ready:
     
 set_ccw:
     	neg a0, a0                  	# Make power positive for PWM register
-	la t0,R16_TIM1_CCER
-	lw x11,0(t0)			# CC1NP & CC1NE.Compare capture channel 1 complementary output polaity setting bit & enable bit
-	andi x11,x11,~(1<<0)		# clear CC1P & CC1E
-	#li x7,(3<<2)			# active part is negative,complimentary,off part is controlled(enabling this makes motor speed high in CCW)
-	li x7,(1<<2)			# active part is positive(ON side), CCW & CW same speed = both directions have ON side controlled
-	or x11,x11,x7			# 40% high, 60% low on pd0 TIM1CH1N
-	sw x11,0(t0)
+		la t0,R16_TIM1_CCER
+		lw x11,0(t0)			# CC1NP & CC1NE.Compare capture channel 1 complementary output polaity setting bit & enable bit
+		andi x11,x11,~(1<<0)		# clear CC1P & CC1E
+		#li x7,(3<<2)			# active part is negative,complimentary,off part is controlled(enabling this makes motor speed high in CCW)
+		li x7,(1<<2)			# active part is positive(ON side), CCW & CW same speed = both directions have ON side controlled
+		or x11,x11,x7			# 40% high, 60% low on pd0 TIM1CH1N
+		sw x11,0(t0)
     	j apply_speed
 
 set_cw:
     	la t0,R16_TIM1_CCER
-	lw x11,0(t0)			# CC1P & CC1E.Compare capture channel 1  output polaity setting bit 0 & enable bit 1
-	#andi x11,x11,~(3<<2)
-	andi x11,x11,~(1<<2)	# disable complimentary output
-	li x7,(1<<0)			# active part is positive ,complimentary,off part is controlled
-	or x11,x11,x7			# 40% high, 60% low on pd2 TIM1CH1
-	sw x11,0(t0)			# same as above
+		lw x11,0(t0)			# CC1P & CC1E.Compare capture channel 1  output polaity setting bit 0 & enable bit 1
+		#andi x11,x11,~(3<<2)
+		andi x11,x11,~(1<<2)	# disable complimentary output
+		li x7,(1<<0)			# active part is positive ,complimentary,off part is controlled
+		or x11,x11,x7			# 40% high, 60% low on pd2 TIM1CH1
+		sw x11,0(t0)			# same as above
 
 
 apply_speed:
@@ -865,11 +865,11 @@ store_pwm:
     	sw a0, 0(t1)                	# Update Motor Speed
 
 # clear interrupt flag
-	la x10,R16_TIM1_INTFR
-	lw x11,0(x10)
-	li x7,~1			# 0<<UIF
-	and x11,x11,x7
-	sw x11,0(x10)
+		la x10,R16_TIM1_INTFR
+		lw x11,0(x10)
+		li x7,~1			# 0<<UIF
+		and x11,x11,x7
+		sw x11,0(x10)
 
 
 ############
@@ -900,7 +900,7 @@ COMMAND_WRITE:
 		addi sp,sp,-8
 		sw ra,0(sp)
 		sw a0,4(sp)
-                la a0,scratch
+        la a0,scratch
 		sb x15,0(a0)
 		andi x15,x15,0xf0
 		ori x15,x15,inst_command2
@@ -911,7 +911,7 @@ COMMAND_WRITE:
 		call I2C_WRITE
 		call delay10us
 		call delay10us
-                la a0,scratch
+        la a0,scratch
 		lb x15,0(a0)
 		andi x15,x15,0x0f
 		slli x15,x15,4
@@ -933,7 +933,7 @@ DATA_WRITE:
 		addi sp,sp,-8
 		sw ra,0(sp)
 		sw a0,4(sp)
-                la a0,scratch
+        la a0,scratch
 		sw x15,0(a0)
 		andi x15,x15,0xf0
 		ori x15,x15,data_command2
@@ -944,7 +944,7 @@ DATA_WRITE:
 		call I2C_WRITE
 		call delay10us
 		call delay10us
-                la a0,scratch
+        la a0,scratch
 		lw x15,0(a0)
 		andi x15,x15,0x0f
 		slli x15,x15,4
@@ -1071,8 +1071,8 @@ string_reader:
 	sw ra,0(sp)
 	sw x15,4(sp)
 sr_loop:
-    	lb a5, 0(a2)             	# Load the current byte (character) into a1
-    	beq a5, zero, end_loop   	# If character is null (0), exit the loop
+    lb a5, 0(a2)             	# Load the current byte (character) into a1
+    beq a5, zero, end_loop   	# If character is null (0), exit the loop
 	call DATA_WRITE			# send via I2C
 	call delay10us
 	call delay10us
