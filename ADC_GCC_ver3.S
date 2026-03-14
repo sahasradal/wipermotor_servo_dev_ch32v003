@@ -569,8 +569,8 @@ main:
 	or x11,x11,x7
 	sw x11,0(x10)
 #Setup Injected Sequence (PA1) ---
-    	la x10, R32_ADC_ISQR
-    	li x11, (0 << 21)|(1 << 15)           		# JSQ4 = 1 (Channel 1: PA1)# For a 1-channel injected sequence,# the channel number goes in JSQ4. 
+    la x10, R32_ADC_ISQR
+    li x11, (0 << 21)|(1 << 15)           		# JSQ4 = 1 (Channel 1: PA1)# For a 1-channel injected sequence,# the channel number goes in JSQ4. 
 	sw x11, 0(x10)
 # enable injection after regular conversion
 	la x10,R32_ADC_CTLR1
@@ -628,18 +628,18 @@ check2:
 	sw x11,0(x10) 			# store 0 in 21st bit to restart i2c engine
 
 	la x10,R16_I2C_CTLR2 		# set clock in control 2 register
-    	lh x11,0(x10) 			# copy contents of R16_I2C_CTLR2 to x11
+    lh x11,0(x10) 			# copy contents of R16_I2C_CTLR2 to x11
 	li x7,0xffffffc0 		# clear frequency bits 0-5 with bit mask 0xffffffc0
 	and x11,x11,x7 			# AND will clear bit 0-5
-    	li x7,(8<<0) 			# 8Mhz I2C clock .default 24Mhz HSI/3 =8Mhz APB clock
-    	or x11,x11,x7 			# store APB clock frequency in bit 0-5
+    li x7,(8<<0) 			# 8Mhz I2C clock .default 24Mhz HSI/3 =8Mhz APB clock
+    or x11,x11,x7 			# store APB clock frequency in bit 0-5
 	sh x11,0(x10) 			# store back in R16_I2C_CTLR2
-    	la x10,R16_I2C_CKCFGR 		# set pointer to I2C clockregister
-    	lh x11,0(x10) 			# copy values to x11 from above register
+    la x10,R16_I2C_CKCFGR 		# set pointer to I2C clockregister
+    lh x11,0(x10) 			# copy values to x11 from above register
 	li x7,0xfffff000 		# clear CCR bits 0-11 with bitmask 0xfffff000
 	and x11,x11,x7 			# ANDing clears bit 0-11 in x11 register
 	li x7,(40<<0) 			# CCR = t(rscl)+t(wsclh)/tpclk1 = 1000+4000/125 =40 , or (8000000/2*100000)=40 , PCLK/2*100Khz =CCR
-    	or x11,x11,x7 			# store calculated CCR (data sheet)in x11 by OR
+    or x11,x11,x7 			# store calculated CCR (data sheet)in x11 by OR
 	sh x11,0(x10) 			# store back in peripheral register
 	la x10,R16_I2C_CTLR1 		# set pointer to I2C control register 1
 	lh x11,0(x10) 			# copy contents
@@ -741,7 +741,7 @@ PFIC_CONFIG:
 	call delay1S			# 1 second delay
 
 	string name			# transmit name to LCD , testing display
-        call delay1S
+    call delay1S
 	call cleardisplay		# clear lcd screen
 
 # enabling GLOBAL INTERRUPTS
@@ -784,25 +784,25 @@ TIM1UP_IRQhandler:
 	or x11,x11,x7
 	sw x11,0(x10)
 check_Radc_ready:
-    	la x10, R32_ADC_STATR       	# Load ADC Status Register
-    	lw x11, 0(x10)
-    	andi x11, x11, (1 << 1)     	# Bit 1 is JEOC (End of inject Conversion is last to finish)
-    	beqz x11, check_Radc_ready   	# If NOT ready, wait (should be instant)
+    la x10, R32_ADC_STATR       	# Load ADC Status Register
+    lw x11, 0(x10)
+    andi x11, x11, (1 << 1)     	# Bit 1 is JEOC (End of inject Conversion is last to finish)
+    beqz x11, check_Radc_ready   	# If NOT ready, wait (should be instant)
 	la x10, R32_ADC_RDATAR      	# Load the fresh result
-    	lw a0, 0(x10)               	# a0 = Latest Potentiometer Position motor position
+    lw a0, 0(x10)               	# a0 = Latest Potentiometer Position motor position
 
 check_Iadc_ready:
-    	la x12, R32_ADC_STATR       	# Load ADC Status Register
-    	lw x11, 0(x12)
-    	andi x11, x11, (1 << 2)     	# Bit 1 is JEOC (End of inject Conversion is last to finish)
-    	beqz x11, check_Iadc_ready   	# If NOT ready, wait (should be instant)
+    la x12, R32_ADC_STATR       	# Load ADC Status Register
+    lw x11, 0(x12)
+    andi x11, x11, (1 << 2)     	# Bit 1 is JEOC (End of inject Conversion is last to finish)
+    beqz x11, check_Iadc_ready   	# If NOT ready, wait (should be instant)
 # Clear flags (write 0 to clear)
-    	li   x7, ~( (1<<1)|(1<<2) ) 	# clear EOC + JEOC
-    	and  x11, x11, x7
-    	sw   x11, 0(x12)
+    li   x7, ~( (1<<1)|(1<<2) ) 	# clear EOC + JEOC
+    and  x11, x11, x7
+    sw   x11, 0(x12)
 
 	la   a1, R32_ADC_IDATAR1
-    	lw   a1, 0(a1)             	# PA1 (injected #1) result → a1
+    lw   a1, 0(a1)             	# PA1 (injected #1) result → a1
 	la   t0,input_count
 	sw   a1,0(t0)			# manual potentiometer count in input_count
 
@@ -826,7 +826,7 @@ check_Iadc_ready:
 
 
 # 3. Handle Direction and PWM
-    	bgez a0, set_cw             	# If positive, spin Clockwise
+    bgez a0, set_cw             	# If positive, spin Clockwise
     
 set_ccw:
     neg a0, a0              # Make power positive for PWM register
@@ -852,13 +852,13 @@ set_cw:
 
 
 apply_speed:
-    	# Cap speed at 1000 (ATRLR limit)
-    	li t1, 1000
-    	ble a0, t1, store_pwm
-    	mv a0, t1
+    # Cap speed at 1000 (ATRLR limit)
+    li t1, 1000
+    ble a0, t1, store_pwm
+    mv a0, t1
 store_pwm:
-    	la t1, R16_TIM1_CH1CVR
-    	sw a0, 0(t1)                	# Update Motor Speed
+    la t1, R16_TIM1_CH1CVR
+    sw a0, 0(t1)                	# Update Motor Speed
 
 # clear interrupt flag
 	la x10,R16_TIM1_INTFR
@@ -896,7 +896,7 @@ COMMAND_WRITE:
 		addi sp,sp,-8
 		sw ra,0(sp)
 		sw a0,4(sp)
-                la a0,scratch
+        la a0,scratch
 		sb x15,0(a0)
 		andi x15,x15,0xf0
 		ori x15,x15,inst_command2
@@ -907,7 +907,7 @@ COMMAND_WRITE:
 		call I2C_WRITE
 		call delay10us
 		call delay10us
-                la a0,scratch
+        la a0,scratch
 		lb x15,0(a0)
 		andi x15,x15,0x0f
 		slli x15,x15,4
@@ -929,7 +929,7 @@ DATA_WRITE:
 		addi sp,sp,-8
 		sw ra,0(sp)
 		sw a0,4(sp)
-                la a0,scratch
+        la a0,scratch
 		sw x15,0(a0)
 		andi x15,x15,0xf0
 		ori x15,x15,data_command2
@@ -940,7 +940,7 @@ DATA_WRITE:
 		call I2C_WRITE
 		call delay10us
 		call delay10us
-                la a0,scratch
+        la a0,scratch
 		lw x15,0(a0)
 		andi x15,x15,0x0f
 		slli x15,x15,4
@@ -1067,8 +1067,8 @@ string_reader:
 	sw ra,0(sp)
 	sw x15,4(sp)
 sr_loop:
-    	lb a5, 0(a2)             	# Load the current byte (character) into a1
-    	beq a5, zero, end_loop   	# If character is null (0), exit the loop
+    lb a5, 0(a2)             	# Load the current byte (character) into a1
+    beq a5, zero, end_loop   	# If character is null (0), exit the loop
 	call DATA_WRITE			# send via I2C
 	call delay10us
 	call delay10us
@@ -1494,12 +1494,12 @@ convert_to_decimal_unsigned:
     lw a0, 0(a0)                # load unsigned value
 
     la gp, mem                  # result buffer
-lb t0,0(gp)
+	lb t0,0(gp)
 
-li tp, 0x20202000           	# spaces   li tp, 0x20202020
-or tp,tp,t0
+	li tp, 0x20202000           	# spaces   li tp, 0x20202020
+	or tp,tp,t0
     sw tp, 0(gp)
-li tp, 0x20202020
+	li tp, 0x20202020
     sw tp, 4(gp)
     sw tp, 8(gp)
     addi gp, gp, 9              # start from end (backwards)
